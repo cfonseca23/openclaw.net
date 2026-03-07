@@ -158,6 +158,8 @@ public sealed record ToolInvocation
 [JsonSerializable(typeof(OpenClaw.Core.Pipeline.RecentSenderEntry))]
 [JsonSerializable(typeof(List<OpenClaw.Core.Pipeline.RecentSenderEntry>))]
 [JsonSerializable(typeof(OpenClaw.Core.Security.ChannelAllowlistFile))]
+[JsonSerializable(typeof(AdminSettingsSnapshot))]
+[JsonSerializable(typeof(AdminSettingsPersistenceInfo))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

@@ -391,7 +391,7 @@ if (autonomyMode == "supervised")
         .ToArray();
 }
 
-var agentRuntime = new AgentRuntime(chatClient, tools, memoryStore, config.Llm, config.Memory.MaxHistoryTurns, skills,
+IAgentRuntime agentRuntime = new AgentRuntime(chatClient, tools, memoryStore, config.Llm, config.Memory.MaxHistoryTurns, skills,
     logger: agentLogger, toolTimeoutSeconds: config.Tooling.ToolTimeoutSeconds, metrics: runtimeMetrics,
     parallelToolExecution: config.Tooling.ParallelToolExecution,
     enableCompaction: config.Memory.EnableCompaction,

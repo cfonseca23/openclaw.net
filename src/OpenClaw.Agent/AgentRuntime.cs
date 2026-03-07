@@ -24,7 +24,7 @@ public delegate ValueTask<bool> ToolApprovalCallback(string toolName, string arg
 /// Includes retry with exponential backoff, per-call timeout, circuit breaker,
 /// streaming, parallel tool execution, context compaction, hooks, and tool approval.
 /// </summary>
-public sealed class AgentRuntime
+public sealed class AgentRuntime : IAgentRuntime
 {
     private readonly IChatClient _chatClient;
     private readonly IReadOnlyList<ITool> _tools;

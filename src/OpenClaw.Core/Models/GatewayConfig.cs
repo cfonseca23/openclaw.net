@@ -139,6 +139,12 @@ public sealed class SecurityConfig
     /// chance of committing secrets to config files.
     /// </summary>
     public bool AllowRawSecretRefsOnPublicBind { get; set; } = false;
+
+    /// <summary>Idle timeout (minutes) for browser admin sessions. Default 60 minutes.</summary>
+    public int BrowserSessionIdleMinutes { get; set; } = 60;
+
+    /// <summary>Lifetime (days) for persistent browser admin sessions created with "Remember me". Default 30 days.</summary>
+    public int BrowserRememberDays { get; set; } = 30;
 }
 
 public sealed class WebSocketConfig
