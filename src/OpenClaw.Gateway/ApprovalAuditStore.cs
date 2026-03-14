@@ -64,49 +64,28 @@ internal sealed class ApprovalAuditStore
 
     public IReadOnlyList<ApprovalHistoryEntry> Query(ApprovalHistoryQuery query)
     {
-        if (!File.Exists(_path))
-            return [];
-
         var limit = Math.Clamp(query.Limit, 1, 500);
-        var matches = new List<ApprovalHistoryEntry>(limit);
-
-        List<string> lines;
-        lock (_gate)
-        {
-            lines = File.ReadLines(_path).ToList();
-        }
-
-        for (var i = lines.Count - 1; i >= 0 && matches.Count < limit; i--)
-        {
-            var line = lines[i];
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-
-            try
+        return JsonlQueryBuffer.ReadLatest(
+            _path,
+            _gate,
+            limit,
+            CoreJsonContext.Default.ApprovalHistoryEntry,
+            entry =>
             {
-                var entry = JsonSerializer.Deserialize(line, CoreJsonContext.Default.ApprovalHistoryEntry);
-                if (entry is null)
-                    continue;
-
                 if (!string.IsNullOrWhiteSpace(query.ChannelId) &&
                     !string.Equals(entry.ChannelId, query.ChannelId, StringComparison.Ordinal))
-                    continue;
+                    return false;
                 if (!string.IsNullOrWhiteSpace(query.SenderId) &&
                     !string.Equals(entry.SenderId, query.SenderId, StringComparison.Ordinal))
-                    continue;
+                    return false;
                 if (!string.IsNullOrWhiteSpace(query.ToolName) &&
                     !string.Equals(entry.ToolName, query.ToolName, StringComparison.OrdinalIgnoreCase))
-                    continue;
+                    return false;
 
-                matches.Add(entry);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to parse approval audit line from {Path}", _path);
-            }
-        }
-
-        return matches;
+                return true;
+            },
+            _logger,
+            "Failed to parse approval audit line from {Path}");
     }
 
     private void Append(ApprovalHistoryEntry entry)

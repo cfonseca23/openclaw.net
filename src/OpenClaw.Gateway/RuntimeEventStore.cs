@@ -44,53 +44,33 @@ internal sealed class RuntimeEventStore
 
     public IReadOnlyList<RuntimeEventEntry> Query(RuntimeEventQuery query)
     {
-        if (!File.Exists(_path))
-            return [];
-
         var limit = Math.Clamp(query.Limit, 1, 500);
-        List<string> lines;
-        lock (_gate)
-        {
-            lines = File.ReadLines(_path).ToList();
-        }
-
-        var matches = new List<RuntimeEventEntry>(limit);
-        for (var i = lines.Count - 1; i >= 0 && matches.Count < limit; i--)
-        {
-            var line = lines[i];
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-
-            try
+        return JsonlQueryBuffer.ReadLatest(
+            _path,
+            _gate,
+            limit,
+            CoreJsonContext.Default.RuntimeEventEntry,
+            item =>
             {
-                var item = JsonSerializer.Deserialize(line, CoreJsonContext.Default.RuntimeEventEntry);
-                if (item is null)
-                    continue;
-
                 if (!string.IsNullOrWhiteSpace(query.SessionId) &&
                     !string.Equals(item.SessionId, query.SessionId, StringComparison.Ordinal))
-                    continue;
+                    return false;
                 if (!string.IsNullOrWhiteSpace(query.ChannelId) &&
                     !string.Equals(item.ChannelId, query.ChannelId, StringComparison.Ordinal))
-                    continue;
+                    return false;
                 if (!string.IsNullOrWhiteSpace(query.SenderId) &&
                     !string.Equals(item.SenderId, query.SenderId, StringComparison.Ordinal))
-                    continue;
+                    return false;
                 if (!string.IsNullOrWhiteSpace(query.Component) &&
                     !string.Equals(item.Component, query.Component, StringComparison.OrdinalIgnoreCase))
-                    continue;
+                    return false;
                 if (!string.IsNullOrWhiteSpace(query.Action) &&
                     !string.Equals(item.Action, query.Action, StringComparison.OrdinalIgnoreCase))
-                    continue;
+                    return false;
 
-                matches.Add(item);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to parse runtime event line from {Path}", _path);
-            }
-        }
-
-        return matches;
+                return true;
+            },
+            _logger,
+            "Failed to parse runtime event line from {Path}");
     }
 }

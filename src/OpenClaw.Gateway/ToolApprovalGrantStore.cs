@@ -98,47 +98,31 @@ internal sealed class ToolApprovalGrantStore
                 if (!matched)
                     continue;
 
-                if (scope == "once")
+                if (scope == "once" || item.RemainingUses <= 1)
                 {
                     items.RemoveAt(i);
                     SaveUnsafe(items);
+                    return item;
                 }
-                else if (item.RemainingUses > 0)
+
+                var updated = new ToolApprovalGrant
                 {
-                    var updated = new ToolApprovalGrant
-                    {
-                        Id = item.Id,
-                        Scope = item.Scope ?? scope,
-                        ChannelId = item.ChannelId,
-                        SenderId = item.SenderId,
-                        SessionId = item.SessionId,
-                        ToolName = item.ToolName,
-                        CreatedAtUtc = item.CreatedAtUtc,
-                        ExpiresAtUtc = item.ExpiresAtUtc,
-                        GrantedBy = item.GrantedBy,
-                        GrantSource = item.GrantSource,
-                        RemainingUses = item.RemainingUses
-                    };
+                    Id = item.Id,
+                    Scope = item.Scope ?? scope,
+                    ChannelId = item.ChannelId,
+                    SenderId = item.SenderId,
+                    SessionId = item.SessionId,
+                    ToolName = item.ToolName,
+                    CreatedAtUtc = item.CreatedAtUtc,
+                    ExpiresAtUtc = item.ExpiresAtUtc,
+                    GrantedBy = item.GrantedBy,
+                    GrantSource = item.GrantSource,
+                    RemainingUses = item.RemainingUses - 1
+                };
 
-                    if (scope == "session" && item.ExpiresAtUtc is null)
-                    {
-                        // Session-scoped entries remain until expiration or explicit delete.
-                    }
-
-                    if (changed)
-                        SaveUnsafe(items);
-                    else
-                        _cached = items;
-
-                    return updated;
-                }
-
-                if (changed)
-                    SaveUnsafe(items);
-                else
-                    _cached = items;
-
-                return item;
+                items[i] = updated;
+                SaveUnsafe(items);
+                return updated;
             }
 
             if (changed)

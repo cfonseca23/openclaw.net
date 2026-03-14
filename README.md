@@ -6,20 +6,81 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-> **Disclaimer**: This project is not affiliated with, endorsed by, or associated with [OpenClaw](https://github.com/openclaw/openclaw). It is an independent .NET implementation inspired by their excellent work.
+> **Independent .NET implementation of the OpenClaw agent runtime and gateway, built for deployable .NET services, a strong NativeAOT lane, optional MAF orchestration in the MAF-enabled artifacts, and practical compatibility with the JavaScript plugin ecosystem.**
 
-Self-hosted OpenClaw.NET gateway + agent runtime in .NET (NativeAOT-friendly).
+> **Disclaimer:** This project is not affiliated with, endorsed by, or associated with [OpenClaw](https://github.com/openclaw/openclaw). It is an independent implementation inspired by their work.
 
-## Docs
+---
 
-- [Quickstart Guide](QUICKSTART.md) — Fast local setup, runtime mode selection, and first usage flow.
-- [Tool Guide](TOOLS_GUIDE.md) — Detailed setup for all 18+ native tools.
-- [Hardening Profiles](TOOLS_GUIDE.md#copypaste-hardening-profiles) — Copy/paste dev/staging/prod security setups.
-- [User Guide](USER_GUIDE.md) — Core concepts, providers, tools, skills, and channels.
-- [Startup Architecture Notes](docs/architecture-startup-refactor.md) — Current bootstrap/composition/profile/pipeline layout.
-- [Security Guide](SECURITY.md) — Mandatory reading for public deployments.
-- [Changelog](CHANGELOG.md) — Tracked project changes.
-- [Docker Hub Overview](DOCKERHUB.md)
+## Why This Project Exists
+
+Most agent stacks still assume Python- or Node-first runtimes. That works until you want to keep the rest of your system in .NET, publish lean self-contained binaries, or reuse existing infrastructure without rebuilding your runtime assumptions around another language stack.
+
+OpenClaw.NET takes a different path:
+
+- .NET-first gateway and agent runtime with a real NativeAOT-friendly deployment lane
+- practical reuse of OpenClaw JS/TS plugins through a JSON-RPC bridge instead of forcing rewrites
+- explicit compatibility diagnostics instead of vague "mostly compatible" claims
+- an optional Microsoft Agent Framework orchestrator path in the MAF-enabled artifacts while keeping the native runtime as the default
+- a platform for production-oriented agent infrastructure in .NET: auth, policy, memory, channels, observability, and packaged deployment targets
+
+If this repo is useful to you, star it.
+
+---
+
+## What The Codebase Includes Today
+
+- Gateway surfaces for HTTP, WebSocket, browser UI, webhooks, and OpenAI-compatible endpoints
+- Agent runtime for tools, memory, sessions, skills, policy, approvals, and message pipeline execution
+- Two runtime lanes: trim-safe `aot` and broader-compatibility `jit`
+- Two artifact families: standard artifacts plus MAF-enabled artifacts where `Runtime.Orchestrator=maf` is optional
+- Built-in clients: browser UI at `/chat`, CLI, and Avalonia desktop companion
+- Reusable library packages in-repo: `OpenClaw.Core`, `OpenClaw.PluginKit`, and `OpenClaw.SemanticKernelAdapter`
+- Optional integrations for Telegram, Twilio SMS, WhatsApp, Semantic Kernel, the JS/TS plugin bridge, and the MAF adapter
+
+## Ecosystem Compatibility
+
+OpenClaw.NET is focused on **practical compatibility**, especially around tools, skills, and the mainstream plugin path.
+
+| Surface | Status on `main` after this merge | Notes |
+| --- | --- | --- |
+| Standalone `SKILL.md` packages | Supported | Run natively; no JS bridge required. |
+| JS/TS tool plugins | Supported | Run through the Node bridge. |
+| Trim-safe compatibility lane | Supported in `aot` | Conservative deployment path. |
+| `registerChannel()` / `registerCommand()` / `registerProvider()` / `api.on(...)` | Supported in `jit` | Dynamic plugin surfaces are intentionally JIT-only. |
+| `Runtime.Orchestrator=maf` | Supported in MAF-enabled artifacts | `native` remains the default orchestrator everywhere. |
+| Unsupported plugin/runtime capabilities | Rejected explicitly | The gateway fails fast with compatibility diagnostics instead of partially loading the plugin. |
+
+The goal is not full upstream extension-host parity. The goal is a clear, dependable compatibility contract with honest failure modes.
+
+For the exact compatibility matrix, see [COMPATIBILITY.md](COMPATIBILITY.md).
+
+## Runtime Model
+
+OpenClaw.NET now has two related selectors:
+
+- `Runtime.Mode`: `aot`, `jit`, or `auto`
+- `Runtime.Orchestrator`: `native` everywhere, or `maf` only in the MAF-enabled artifacts
+
+In practice:
+
+- `aot` keeps the trim-safe, lower-memory lane
+- `jit` enables the broader dynamic/plugin compatibility lane
+- `auto` chooses between `aot` and `jit` based on runtime capabilities
+- `native` remains the default orchestrator even in MAF-enabled artifacts
+
+## Quick Links
+
+- [Quickstart Guide](QUICKSTART.md)
+- [User Guide](USER_GUIDE.md)
+- [Tool Guide](TOOLS_GUIDE.md)
+- [Security Guide](SECURITY.md)
+- [Plugin Compatibility Guide](COMPATIBILITY.md)
+- [Semantic Kernel Guide](SEMANTIC_KERNEL.md)
+- [MAF Readiness Notes](docs/experiments/maf-aot-jit-readiness.md)
+- [Startup Architecture Notes](docs/architecture-startup-refactor.md)
+- [Changelog](CHANGELOG.md)
+- [Docker Image Notes](DOCKERHUB.md)
 
 Published container images:
 
@@ -29,12 +90,12 @@ Published container images:
 
 ## Architecture
 
-OpenClaw.NET now separates gateway startup and runtime composition into explicit layers instead of a single large startup path.
+OpenClaw.NET separates gateway startup and runtime composition into explicit layers instead of a single startup path.
 
 Startup flow:
 
 1. `Bootstrap/`
-  - Loads config, resolves runtime mode, applies validation and hardening, and handles early exits such as `--doctor`.
+  - Loads config, resolves runtime mode and orchestrator, applies validation and hardening, and handles early exits such as `--doctor`.
 2. `Composition/` and `Profiles/`
   - Registers services and applies the effective runtime lane: `aot` for trim-safe deployments or `jit` for expanded compatibility.
 3. `Pipeline/` and `Endpoints/`
@@ -45,7 +106,8 @@ Runtime flow:
 - The Gateway handles HTTP, WebSocket, webhook, auth, policy, and observability concerns.
 - The Agent Runtime owns reasoning, tool execution, memory interaction, and skill loading.
 - Native tools run in-process.
-- Upstream-style plugins run through the Node.js bridge, with capability enforcement depending on the effective runtime lane.
+- JS/TS plugins run through the Node.js bridge, with capability enforcement depending on the effective runtime lane.
+- The optional MAF adapter swaps orchestration strategy inside the MAF-enabled artifacts; it does not replace the gateway/runtime ownership model.
 - Pure `SKILL.md` packages remain independent of the plugin bridge.
 
 ```mermaid

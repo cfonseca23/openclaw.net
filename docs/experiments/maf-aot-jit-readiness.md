@@ -16,7 +16,7 @@ This branch does not replace the native OpenClaw runtime. OpenClaw.NET continues
 
 `native` remains the default orchestrator in every artifact. Standard artifacts fail fast if `Runtime.Orchestrator=maf` is configured. MAF-enabled artifacts support both `native` and `maf`.
 
-The publish entrypoint for these deliverables is [publish-gateway-artifacts.sh](/Users/telli/Desktop/openclaw.net/eng/publish-gateway-artifacts.sh).
+The publish entrypoint for these deliverables is [publish-gateway-artifacts.sh](../../eng/publish-gateway-artifacts.sh).
 
 ## CI Support
 
@@ -49,16 +49,16 @@ This keeps the two-artifact packaging model explicit instead of relying on ad ho
 
 The branch now has published-binary four-cell coverage for:
 
-- HTTP tool flow: [maf-aot-jit-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-findings.md)
-- WebSocket approval happy path: [maf-aot-jit-approval-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-approval-findings.md)
-- WebSocket approval denial/timeout/requester-mismatch path: [maf-aot-jit-approval-outcome-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-approval-outcome-findings.md)
-- WebSocket restart/resume and MAF sidecar fallback: [maf-aot-jit-restart-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-restart-findings.md)
-- HTTP plugin tool flow: [maf-aot-jit-plugin-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-plugin-findings.md)
-- HTTP plugin tool flow with file-bound `Plugins:Entries:*:Config`: [maf-aot-jit-plugin-config-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-plugin-config-findings.md)
-- HTTP/SSE text streaming: [maf-aot-jit-stream-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-stream-findings.md)
-- HTTP/SSE streamed tool flow: [maf-aot-jit-stream-tool-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-stream-tool-findings.md)
-- `/v1/responses` streamed tool flow: [maf-aot-jit-responses-stream-tool-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-responses-stream-tool-findings.md)
-- `/v1/responses` failure flow: [maf-aot-jit-responses-failed-findings.md](/Users/telli/Desktop/openclaw.net/docs/experiments/maf-aot-jit-responses-failed-findings.md)
+- HTTP tool flow: [maf-aot-jit-findings.md](maf-aot-jit-findings.md)
+- WebSocket approval happy path: [maf-aot-jit-approval-findings.md](maf-aot-jit-approval-findings.md)
+- WebSocket approval denial/timeout/requester-mismatch path: [maf-aot-jit-approval-outcome-findings.md](maf-aot-jit-approval-outcome-findings.md)
+- WebSocket restart/resume and MAF sidecar fallback: [maf-aot-jit-restart-findings.md](maf-aot-jit-restart-findings.md)
+- HTTP plugin tool flow: [maf-aot-jit-plugin-findings.md](maf-aot-jit-plugin-findings.md)
+- HTTP plugin tool flow with file-bound `Plugins:Entries:*:Config`: [maf-aot-jit-plugin-config-findings.md](maf-aot-jit-plugin-config-findings.md)
+- HTTP/SSE text streaming: [maf-aot-jit-stream-findings.md](maf-aot-jit-stream-findings.md)
+- HTTP/SSE streamed tool flow: [maf-aot-jit-stream-tool-findings.md](maf-aot-jit-stream-tool-findings.md)
+- `/v1/responses` streamed tool flow: [maf-aot-jit-responses-stream-tool-findings.md](maf-aot-jit-responses-stream-tool-findings.md)
+- `/v1/responses` failure flow: [maf-aot-jit-responses-failed-findings.md](maf-aot-jit-responses-failed-findings.md)
 
 Representative findings from the new completion work:
 
