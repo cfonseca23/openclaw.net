@@ -336,6 +336,10 @@ public sealed class OpenClawToolExecutor
         if (tool is not ISandboxCapableTool sandboxCapableTool)
             return await ExecuteToolWithTimeoutAsync(tool, argsJson, ct);
 
+        // Provider=None is the operator-facing global off switch for sandbox routing.
+        if (!ToolSandboxPolicy.IsOpenSandboxProviderConfigured(_config))
+            return await ExecuteToolWithTimeoutAsync(tool, argsJson, ct);
+
         var mode = ToolSandboxPolicy.ResolveMode(_config, tool.Name, sandboxCapableTool.DefaultSandboxMode);
         if (mode == ToolSandboxMode.None)
             return await ExecuteToolWithTimeoutAsync(tool, argsJson, ct);

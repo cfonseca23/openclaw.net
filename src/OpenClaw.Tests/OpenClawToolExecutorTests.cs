@@ -171,6 +171,43 @@ public sealed class OpenClawToolExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_SandboxRequireWithProviderNone_UsesLocalExecution()
+    {
+        var tool = new SandboxCapableEchoTool(ToolSandboxMode.Require, "local-result");
+        var executor = CreateExecutor(
+            [tool],
+            toolSandbox: null,
+            config: new GatewayConfig
+            {
+                Sandbox = new SandboxConfig
+                {
+                    Provider = SandboxProviderNames.None,
+                    Tools = new Dictionary<string, SandboxToolConfig>(StringComparer.Ordinal)
+                    {
+                        ["sandbox_echo"] = new()
+                        {
+                            Mode = nameof(ToolSandboxMode.Require),
+                            Template = "ghcr.io/example/sandbox:latest"
+                        }
+                    }
+                }
+            });
+
+        var result = await executor.ExecuteAsync(
+            "sandbox_echo",
+            """{"value":"hi"}""",
+            callId: null,
+            CreateSession(),
+            CreateTurnContext(),
+            isStreaming: false,
+            approvalCallback: null,
+            CancellationToken.None);
+
+        Assert.Equal("local-result", result.ResultText);
+        Assert.Equal(1, tool.LocalExecutionCount);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_HookDenialPreventsSandboxExecution()
     {
         var tool = new SandboxCapableEchoTool(ToolSandboxMode.Require, "local-result");

@@ -234,4 +234,28 @@ public sealed class ConfigValidatorTests
         var errors = ConfigValidator.Validate(config);
         Assert.Contains(errors, e => e.Contains("Sandbox.Tools.shell.Template", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Validate_SandboxProviderNone_AllowsConfiguredToolOverrides()
+    {
+        var config = new GatewayConfig
+        {
+            Sandbox = new SandboxConfig
+            {
+                Provider = SandboxProviderNames.None,
+                Tools = new Dictionary<string, SandboxToolConfig>(StringComparer.Ordinal)
+                {
+                    ["shell"] = new()
+                    {
+                        Mode = nameof(ToolSandboxMode.Require),
+                        Template = "alpine:3.20",
+                        TTL = 300
+                    }
+                }
+            }
+        };
+
+        var errors = ConfigValidator.Validate(config);
+        Assert.DoesNotContain(errors, error => error.Contains("Sandbox.", StringComparison.Ordinal));
+    }
 }

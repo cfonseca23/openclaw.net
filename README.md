@@ -81,11 +81,12 @@ Current scope:
 
 Key points:
 
-- sandbox support is disabled by default
+- sandbox routing is enabled by default in the shipped gateway config
 - the standard runtime artifact does not include the OpenSandbox integration package
 - the sandbox-enabled build is produced with `-p:OpenClawEnableOpenSandbox=true`
 - `Prefer` mode falls back to local execution if the provider is unavailable
 - `Require` mode fails closed and is the recommended public-bind setting for `shell`
+- set `OpenClaw:Sandbox:Provider=None` to force all sandbox-capable tools back to local execution
 
 Example:
 
@@ -98,16 +99,28 @@ Example:
     "DefaultTTL": 300,
     "Tools": {
       "shell": {
-        "Mode": "Require",
-        "Template": "ghcr.io/your-org/opensandbox-shell:latest",
+        "Mode": "Prefer",
+        "Template": "alpine:3.20",
         "TTL": 300
+      },
+      "code_exec": {
+        "Mode": "Prefer",
+        "Template": "nikolaik/python-nodejs:python3.12-nodejs22-slim",
+        "TTL": 300
+      },
+      "browser": {
+        "Mode": "Prefer",
+        "Template": "mcr.microsoft.com/playwright:v1.52.0-noble",
+        "TTL": 600
       }
     }
   }
 }
 ```
 
-See [docs/sandboxing.md](docs/sandboxing.md) for the architecture, build flag, and full config examples.
+These are starter image choices. For public or production deployments, promote tools like `shell` to `Require` and replace the image URIs with images you control.
+
+See [docs/sandboxing.md](docs/sandboxing.md) for the architecture, build flag, local-switch behavior, and full config examples.
 
 ## Quick Links
 
