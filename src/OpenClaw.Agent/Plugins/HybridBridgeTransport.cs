@@ -17,11 +17,17 @@ public sealed class HybridBridgeTransport : IBridgeTransport
     private Action<BridgeNotification>? _currentHandler;
     private volatile bool _useSocket;
 
-    public HybridBridgeTransport(string socketPath, string? socketDirectory, string authToken, ILogger logger, RuntimeMetrics? metrics = null)
+    public HybridBridgeTransport(
+        string socketPath,
+        string? socketDirectory,
+        bool ownsSocketDirectory,
+        string authToken,
+        ILogger logger,
+        RuntimeMetrics? metrics = null)
     {
         _logger = logger;
         _bootstrap = new StdioBridgeTransport(logger);
-        _socket = new SocketBridgeTransport(socketPath, socketDirectory, authToken, logger, metrics);
+        _socket = new SocketBridgeTransport(socketPath, socketDirectory, ownsSocketDirectory, authToken, logger, metrics);
     }
 
     public Task PrepareAsync(CancellationToken ct)

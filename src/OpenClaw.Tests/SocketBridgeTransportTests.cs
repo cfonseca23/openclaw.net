@@ -24,6 +24,7 @@ public sealed class SocketBridgeTransportTests
         await using var transport = new SocketBridgeTransport(
             socketPath,
             tempDir,
+            ownsSocketDirectory: true,
             "expected-token",
             NullLogger.Instance,
             metrics);
@@ -46,6 +47,33 @@ public sealed class SocketBridgeTransportTests
         }
 
         Assert.Equal(1, metrics.PluginBridgeAuthFailures);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_DoesNotDeleteConfiguredSocketParentDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var tempDir = Path.Combine("/tmp", $".openclaw-socket-configured-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var markerPath = Path.Combine(tempDir, "keep.txt");
+        await File.WriteAllTextAsync(markerPath, "keep");
+        var socketPath = Path.Combine(tempDir, "bridge.sock");
+
+        await using (var transport = new SocketBridgeTransport(
+            socketPath,
+            tempDir,
+            ownsSocketDirectory: false,
+            "expected-token",
+            NullLogger.Instance))
+        {
+            await transport.PrepareAsync(CancellationToken.None);
+        }
+
+        Assert.True(Directory.Exists(tempDir));
+        Assert.True(File.Exists(markerPath));
+        Assert.False(File.Exists(socketPath));
     }
 
     private static async Task<TestSocketClient> ConnectAsync(string socketPath)

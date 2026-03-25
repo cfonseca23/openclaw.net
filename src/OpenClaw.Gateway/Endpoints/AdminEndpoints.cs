@@ -1938,7 +1938,7 @@ internal static class AdminEndpoints
             .ToArray();
 
         var autonomyHook = new AutonomyHook(effectiveTooling, NullLogger.Instance);
-        var allowed = await autonomyHook.BeforeExecuteAsync(request.ToolName!, argumentsJson, ct);
+        var allowed = await autonomyHook.BeforeExecuteAsync(normalizedToolName, argumentsJson, ct);
         if (!allowed)
         {
             return new ApprovalSimulationResponse

@@ -17,6 +17,7 @@ public sealed class SocketBridgeTransport : BridgeTransportBase
     private readonly ILogger _logger;
     private readonly string _socketPath;
     private readonly string? _socketDirectory;
+    private readonly bool _ownsSocketDirectory;
     private readonly string _authToken;
     private readonly RuntimeMetrics? _metrics;
     private readonly string? _pipeName;
@@ -26,12 +27,19 @@ public sealed class SocketBridgeTransport : BridgeTransportBase
     private StreamReader? _reader;
     private StreamWriter? _writer;
 
-    public SocketBridgeTransport(string socketPath, string? socketDirectory, string authToken, ILogger logger, RuntimeMetrics? metrics = null)
+    public SocketBridgeTransport(
+        string socketPath,
+        string? socketDirectory,
+        bool ownsSocketDirectory,
+        string authToken,
+        ILogger logger,
+        RuntimeMetrics? metrics = null)
         : base(logger)
     {
         _logger = logger;
         _socketPath = socketPath;
         _socketDirectory = socketDirectory;
+        _ownsSocketDirectory = ownsSocketDirectory;
         _authToken = authToken;
         _metrics = metrics;
         _pipeName = OperatingSystem.IsWindows() ? NormalizePipeName(socketPath) : null;
@@ -146,7 +154,7 @@ public sealed class SocketBridgeTransport : BridgeTransportBase
                 _logger.LogDebug(ex, "Failed to remove bridge socket path {SocketPath}", _socketPath);
             }
 
-            if (!string.IsNullOrWhiteSpace(_socketDirectory))
+            if (_ownsSocketDirectory && !string.IsNullOrWhiteSpace(_socketDirectory))
             {
                 try
                 {

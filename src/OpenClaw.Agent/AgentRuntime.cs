@@ -251,14 +251,14 @@ public sealed class AgentRuntime : IAgentRuntime
             {
                 throw;
             }
+            catch (EstimatedBudgetAdmissionException ex)
+            {
+                LogTurnComplete(turnCtx);
+                return ex.Message;
+            }
+
             catch (Exception ex)
             {
-                if (IsEstimatedBudgetAdmissionError(ex))
-                {
-                    LogTurnComplete(turnCtx);
-                    return ex.Message;
-                }
-
                 _metrics?.IncrementLlmErrors();
                 _logger?.LogError(ex, "[{CorrelationId}] LLM call failed after all retries and fallbacks", turnCtx.CorrelationId);
                 LogTurnComplete(turnCtx);
@@ -918,7 +918,7 @@ public sealed class AgentRuntime : IAgentRuntime
 
         var estimate = LlmExecutionEstimateBuilder.Create(messages, _skillPromptLength);
         if (TryRejectEstimatedBudget(session, estimate, out var admissionMessage))
-            throw new InvalidOperationException(admissionMessage);
+            throw new EstimatedBudgetAdmissionException(admissionMessage);
 
         if (_llmExecutionService is not null)
             return await _llmExecutionService.GetResponseAsync(
@@ -1241,9 +1241,7 @@ public sealed class AgentRuntime : IAgentRuntime
         return true;
     }
 
-    private static bool IsEstimatedBudgetAdmissionError(Exception ex)
-        => ex is InvalidOperationException &&
-           ex.Message.Contains("close to its token budget", StringComparison.OrdinalIgnoreCase);
+    private sealed class EstimatedBudgetAdmissionException(string message) : Exception(message);
 
     private void LogTurnComplete(TurnContext turnCtx)
     {

@@ -151,6 +151,26 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task ApprovalSimulation_NormalizesToolAliasForAutonomyChecks()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true, config =>
+        {
+            config.Tooling.ReadOnlyMode = true;
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/approvals/simulate")
+        {
+            Content = JsonContent("""{"toolName":"file_write","autonomyMode":"readonly","requireToolApproval":false}""")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        Assert.Equal("deny", payload.RootElement.GetProperty("decision").GetString());
+    }
+
+    [Fact]
     public async Task IncidentExport_RedactsSensitiveRuntimeEventContent()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);

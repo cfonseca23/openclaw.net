@@ -22,10 +22,22 @@ internal static class BridgeTransportFactory
         {
             "stdio" => (new StdioBridgeTransport(logger), new BridgeTransportRuntimeConfig { Mode = mode }),
             "socket" => (
-                new SocketBridgeTransport(socketOptions!.SocketPath, socketOptions.SocketDirectory, socketOptions.AuthToken, logger, metrics),
+                new SocketBridgeTransport(
+                    socketOptions!.SocketPath,
+                    socketOptions.SocketDirectory,
+                    socketOptions.OwnsSocketDirectory,
+                    socketOptions.AuthToken,
+                    logger,
+                    metrics),
                 CreateRuntimeConfig(mode, socketOptions)),
             "hybrid" => (
-                new HybridBridgeTransport(socketOptions!.SocketPath, socketOptions.SocketDirectory, socketOptions.AuthToken, logger, metrics),
+                new HybridBridgeTransport(
+                    socketOptions!.SocketPath,
+                    socketOptions.SocketDirectory,
+                    socketOptions.OwnsSocketDirectory,
+                    socketOptions.AuthToken,
+                    logger,
+                    metrics),
                 CreateRuntimeConfig(mode, socketOptions)),
             _ => throw new InvalidOperationException(
                 $"Unsupported plugin bridge transport mode '{config.Mode}'. Supported modes: stdio, socket, hybrid.")
@@ -52,7 +64,7 @@ internal static class BridgeTransportFactory
             var pipePath = !string.IsNullOrWhiteSpace(configuredPath)
                 ? NormalizePipePath(configuredPath)
                 : $@"\\.\pipe\openclaw-{Sanitize(pluginId)}-{Guid.NewGuid():N}";
-            return new SocketTransportOptions(pipePath, null, CreateAuthToken());
+            return new SocketTransportOptions(pipePath, null, false, CreateAuthToken());
         }
 
         if (!string.IsNullOrWhiteSpace(configuredPath))
@@ -61,6 +73,7 @@ internal static class BridgeTransportFactory
             return new SocketTransportOptions(
                 socketPath,
                 Path.GetDirectoryName(socketPath),
+                OwnsSocketDirectory: false,
                 CreateAuthToken());
         }
 
@@ -69,6 +82,7 @@ internal static class BridgeTransportFactory
         return new SocketTransportOptions(
             Path.Combine(socketDirectory, "s"),
             socketDirectory,
+            OwnsSocketDirectory: true,
             CreateAuthToken());
     }
 
@@ -124,5 +138,9 @@ internal static class BridgeTransportFactory
         return builder.ToString().Trim('-');
     }
 
-    private sealed record SocketTransportOptions(string SocketPath, string? SocketDirectory, string AuthToken);
+    private sealed record SocketTransportOptions(
+        string SocketPath,
+        string? SocketDirectory,
+        bool OwnsSocketDirectory,
+        string AuthToken);
 }
