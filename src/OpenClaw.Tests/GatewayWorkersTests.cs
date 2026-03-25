@@ -788,6 +788,352 @@ public sealed class GatewayWorkersTests
         Assert.False(adapter.TryRead(out _));
     }
 
+    [Fact]
+    public async Task Start_BridgedGroupMessage_UsesGroupIdForSessionReplyAndTyping()
+    {
+        var storagePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "openclaw-worker-tests", Guid.NewGuid().ToString("N"));
+        var store = new FileMemoryStore(storagePath, 4);
+        var config = new GatewayConfig
+        {
+            Memory = new MemoryConfig
+            {
+                StoragePath = storagePath
+            },
+            Tooling = new ToolingConfig
+            {
+                EnableBrowserTool = false
+            },
+            Channels = new ChannelsConfig
+            {
+                WhatsApp = new WhatsAppChannelConfig
+                {
+                    Enabled = true,
+                    DmPolicy = "open"
+                }
+            }
+        };
+
+        var sessionManager = new SessionManager(store, config, NullLogger.Instance);
+        var heartbeatService = new HeartbeatService(config, store, sessionManager, NullLogger<HeartbeatService>.Instance);
+        var pipeline = new MessagePipeline();
+        var middleware = new MiddlewarePipeline([]);
+        var wsChannel = new WebSocketChannel(config.WebSocket);
+        await using var adapter = new RecordingBridgedChannelAdapter("whatsapp");
+        var agentRuntime = Substitute.For<IAgentRuntime>();
+        agentRuntime.RunAsync(Arg.Any<Session>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<ToolApprovalCallback?>(), Arg.Any<System.Text.Json.JsonElement?>())
+            .Returns("group-response");
+        var toolApprovalService = new ToolApprovalService();
+        var approvalAuditStore = new ApprovalAuditStore(storagePath, NullLogger<ApprovalAuditStore>.Instance);
+        var pairingManager = new OpenClaw.Core.Security.PairingManager(storagePath, NullLogger<OpenClaw.Core.Security.PairingManager>.Instance);
+        var commandProcessor = new ChatCommandProcessor(sessionManager);
+        var runtimeMetrics = new OpenClaw.Core.Observability.RuntimeMetrics();
+        var providerRegistry = new LlmProviderRegistry();
+        var providerPolicies = new ProviderPolicyService(storagePath, NullLogger<ProviderPolicyService>.Instance);
+        var runtimeEvents = new RuntimeEventStore(storagePath, NullLogger<RuntimeEventStore>.Instance);
+        var operations = new RuntimeOperationsState
+        {
+            ProviderPolicies = providerPolicies,
+            ProviderRegistry = providerRegistry,
+            LlmExecution = new GatewayLlmExecutionService(
+                config,
+                providerRegistry,
+                providerPolicies,
+                runtimeEvents,
+                runtimeMetrics,
+                new OpenClaw.Core.Observability.ProviderUsageTracker(),
+                NullLogger<GatewayLlmExecutionService>.Instance),
+            PluginHealth = new PluginHealthService(storagePath, NullLogger<PluginHealthService>.Instance),
+            ApprovalGrants = new ToolApprovalGrantStore(storagePath, NullLogger<ToolApprovalGrantStore>.Instance),
+            RuntimeEvents = runtimeEvents,
+            OperatorAudit = new OperatorAuditStore(storagePath, NullLogger<OperatorAuditStore>.Instance),
+            WebhookDeliveries = new WebhookDeliveryStore(storagePath, NullLogger<WebhookDeliveryStore>.Instance),
+            ActorRateLimits = new ActorRateLimitService(storagePath, NullLogger<ActorRateLimitService>.Instance),
+            SessionMetadata = new SessionMetadataStore(storagePath, NullLogger<SessionMetadataStore>.Instance)
+        };
+
+        using var lifetime = new TestApplicationLifetime();
+        GatewayWorkers.Start(
+            lifetime,
+            NullLogger.Instance,
+            workerCount: 1,
+            isNonLoopbackBind: false,
+            sessionManager,
+            new ConcurrentDictionary<string, SemaphoreSlim>(),
+            new ConcurrentDictionary<string, DateTimeOffset>(),
+            pipeline,
+            middleware,
+            wsChannel,
+            agentRuntime,
+            new Dictionary<string, IChannelAdapter>(StringComparer.Ordinal)
+            {
+                ["whatsapp"] = adapter
+            },
+            config,
+            cronScheduler: null,
+            heartbeatService,
+            toolApprovalService,
+            approvalAuditStore,
+            pairingManager,
+            commandProcessor,
+            operations);
+
+        await pipeline.InboundWriter.WriteAsync(new InboundMessage
+        {
+            ChannelId = "whatsapp",
+            SenderId = "user-1",
+            Text = "hello group",
+            MessageId = "msg-group",
+            IsGroup = true,
+            GroupId = "group-1",
+            GroupName = "Test Group"
+        });
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var outbound = await adapter.ReadAsync(timeout.Token);
+        await WaitForAsync(
+            () => adapter.TypingEvents.Count >= 2,
+            TimeSpan.FromSeconds(2),
+            "Timed out waiting for bridged typing lifecycle.");
+
+        Assert.Equal("group-1", outbound.RecipientId);
+        Assert.Equal("msg-group", outbound.ReplyToMessageId);
+        Assert.Collection(
+            adapter.TypingEvents,
+            evt =>
+            {
+                Assert.Equal("group-1", evt.RecipientId);
+                Assert.True(evt.IsTyping);
+            },
+            evt =>
+            {
+                Assert.Equal("group-1", evt.RecipientId);
+                Assert.False(evt.IsTyping);
+            });
+        Assert.Contains("msg-group", adapter.ReadReceiptMessageIds);
+        Assert.NotNull(sessionManager.TryGetActive("whatsapp", "group-1"));
+        Assert.Null(sessionManager.TryGetActive("whatsapp", "user-1"));
+    }
+
+    [Fact]
+    public async Task Start_BridgedTypingCleanup_OnAgentFailure_SendsTypingStop()
+    {
+        var storagePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "openclaw-worker-tests", Guid.NewGuid().ToString("N"));
+        var store = new FileMemoryStore(storagePath, 4);
+        var config = new GatewayConfig
+        {
+            Memory = new MemoryConfig
+            {
+                StoragePath = storagePath
+            },
+            Tooling = new ToolingConfig
+            {
+                EnableBrowserTool = false
+            },
+            Channels = new ChannelsConfig
+            {
+                WhatsApp = new WhatsAppChannelConfig
+                {
+                    Enabled = true,
+                    DmPolicy = "open"
+                }
+            }
+        };
+
+        var sessionManager = new SessionManager(store, config, NullLogger.Instance);
+        var heartbeatService = new HeartbeatService(config, store, sessionManager, NullLogger<HeartbeatService>.Instance);
+        var pipeline = new MessagePipeline();
+        var middleware = new MiddlewarePipeline([]);
+        var wsChannel = new WebSocketChannel(config.WebSocket);
+        await using var adapter = new RecordingBridgedChannelAdapter("whatsapp");
+        var agentRuntime = Substitute.For<IAgentRuntime>();
+        agentRuntime.RunAsync(Arg.Any<Session>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<ToolApprovalCallback?>(), Arg.Any<System.Text.Json.JsonElement?>())
+            .Returns<Task<string>>(_ => throw new InvalidOperationException("boom"));
+        var toolApprovalService = new ToolApprovalService();
+        var approvalAuditStore = new ApprovalAuditStore(storagePath, NullLogger<ApprovalAuditStore>.Instance);
+        var pairingManager = new OpenClaw.Core.Security.PairingManager(storagePath, NullLogger<OpenClaw.Core.Security.PairingManager>.Instance);
+        var commandProcessor = new ChatCommandProcessor(sessionManager);
+        var runtimeMetrics = new OpenClaw.Core.Observability.RuntimeMetrics();
+        var providerRegistry = new LlmProviderRegistry();
+        var providerPolicies = new ProviderPolicyService(storagePath, NullLogger<ProviderPolicyService>.Instance);
+        var runtimeEvents = new RuntimeEventStore(storagePath, NullLogger<RuntimeEventStore>.Instance);
+        var operations = new RuntimeOperationsState
+        {
+            ProviderPolicies = providerPolicies,
+            ProviderRegistry = providerRegistry,
+            LlmExecution = new GatewayLlmExecutionService(
+                config,
+                providerRegistry,
+                providerPolicies,
+                runtimeEvents,
+                runtimeMetrics,
+                new OpenClaw.Core.Observability.ProviderUsageTracker(),
+                NullLogger<GatewayLlmExecutionService>.Instance),
+            PluginHealth = new PluginHealthService(storagePath, NullLogger<PluginHealthService>.Instance),
+            ApprovalGrants = new ToolApprovalGrantStore(storagePath, NullLogger<ToolApprovalGrantStore>.Instance),
+            RuntimeEvents = runtimeEvents,
+            OperatorAudit = new OperatorAuditStore(storagePath, NullLogger<OperatorAuditStore>.Instance),
+            WebhookDeliveries = new WebhookDeliveryStore(storagePath, NullLogger<WebhookDeliveryStore>.Instance),
+            ActorRateLimits = new ActorRateLimitService(storagePath, NullLogger<ActorRateLimitService>.Instance),
+            SessionMetadata = new SessionMetadataStore(storagePath, NullLogger<SessionMetadataStore>.Instance)
+        };
+
+        using var lifetime = new TestApplicationLifetime();
+        GatewayWorkers.Start(
+            lifetime,
+            NullLogger.Instance,
+            workerCount: 1,
+            isNonLoopbackBind: false,
+            sessionManager,
+            new ConcurrentDictionary<string, SemaphoreSlim>(),
+            new ConcurrentDictionary<string, DateTimeOffset>(),
+            pipeline,
+            middleware,
+            wsChannel,
+            agentRuntime,
+            new Dictionary<string, IChannelAdapter>(StringComparer.Ordinal)
+            {
+                ["whatsapp"] = adapter
+            },
+            config,
+            cronScheduler: null,
+            heartbeatService,
+            toolApprovalService,
+            approvalAuditStore,
+            pairingManager,
+            commandProcessor,
+            operations);
+
+        await pipeline.InboundWriter.WriteAsync(new InboundMessage
+        {
+            ChannelId = "whatsapp",
+            SenderId = "user-1",
+            Text = "hello",
+            MessageId = "msg-error"
+        });
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var outbound = await adapter.ReadAsync(timeout.Token);
+        await WaitForAsync(
+            () => adapter.TypingEvents.Count >= 2,
+            TimeSpan.FromSeconds(2),
+            "Timed out waiting for bridged typing cleanup after failure.");
+
+        Assert.Contains("Internal error", outbound.Text, StringComparison.Ordinal);
+        Assert.Collection(
+            adapter.TypingEvents,
+            evt => Assert.True(evt.IsTyping),
+            evt => Assert.False(evt.IsTyping));
+    }
+
+    [Fact]
+    public async Task Start_BridgedTypingCleanup_OnAgentCancellation_SendsTypingStop()
+    {
+        var storagePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "openclaw-worker-tests", Guid.NewGuid().ToString("N"));
+        var store = new FileMemoryStore(storagePath, 4);
+        var config = new GatewayConfig
+        {
+            Memory = new MemoryConfig
+            {
+                StoragePath = storagePath
+            },
+            Tooling = new ToolingConfig
+            {
+                EnableBrowserTool = false
+            },
+            Channels = new ChannelsConfig
+            {
+                WhatsApp = new WhatsAppChannelConfig
+                {
+                    Enabled = true,
+                    DmPolicy = "open"
+                }
+            }
+        };
+
+        var sessionManager = new SessionManager(store, config, NullLogger.Instance);
+        var heartbeatService = new HeartbeatService(config, store, sessionManager, NullLogger<HeartbeatService>.Instance);
+        var pipeline = new MessagePipeline();
+        var middleware = new MiddlewarePipeline([]);
+        var wsChannel = new WebSocketChannel(config.WebSocket);
+        await using var adapter = new RecordingBridgedChannelAdapter("whatsapp");
+        var agentRuntime = Substitute.For<IAgentRuntime>();
+        agentRuntime.RunAsync(Arg.Any<Session>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<ToolApprovalCallback?>(), Arg.Any<System.Text.Json.JsonElement?>())
+            .Returns<Task<string>>(_ => throw new OperationCanceledException("simulated cancellation"));
+        var toolApprovalService = new ToolApprovalService();
+        var approvalAuditStore = new ApprovalAuditStore(storagePath, NullLogger<ApprovalAuditStore>.Instance);
+        var pairingManager = new OpenClaw.Core.Security.PairingManager(storagePath, NullLogger<OpenClaw.Core.Security.PairingManager>.Instance);
+        var commandProcessor = new ChatCommandProcessor(sessionManager);
+        var runtimeMetrics = new OpenClaw.Core.Observability.RuntimeMetrics();
+        var providerRegistry = new LlmProviderRegistry();
+        var providerPolicies = new ProviderPolicyService(storagePath, NullLogger<ProviderPolicyService>.Instance);
+        var runtimeEvents = new RuntimeEventStore(storagePath, NullLogger<RuntimeEventStore>.Instance);
+        var operations = new RuntimeOperationsState
+        {
+            ProviderPolicies = providerPolicies,
+            ProviderRegistry = providerRegistry,
+            LlmExecution = new GatewayLlmExecutionService(
+                config,
+                providerRegistry,
+                providerPolicies,
+                runtimeEvents,
+                runtimeMetrics,
+                new OpenClaw.Core.Observability.ProviderUsageTracker(),
+                NullLogger<GatewayLlmExecutionService>.Instance),
+            PluginHealth = new PluginHealthService(storagePath, NullLogger<PluginHealthService>.Instance),
+            ApprovalGrants = new ToolApprovalGrantStore(storagePath, NullLogger<ToolApprovalGrantStore>.Instance),
+            RuntimeEvents = runtimeEvents,
+            OperatorAudit = new OperatorAuditStore(storagePath, NullLogger<OperatorAuditStore>.Instance),
+            WebhookDeliveries = new WebhookDeliveryStore(storagePath, NullLogger<WebhookDeliveryStore>.Instance),
+            ActorRateLimits = new ActorRateLimitService(storagePath, NullLogger<ActorRateLimitService>.Instance),
+            SessionMetadata = new SessionMetadataStore(storagePath, NullLogger<SessionMetadataStore>.Instance)
+        };
+
+        using var lifetime = new TestApplicationLifetime();
+        GatewayWorkers.Start(
+            lifetime,
+            NullLogger.Instance,
+            workerCount: 1,
+            isNonLoopbackBind: false,
+            sessionManager,
+            new ConcurrentDictionary<string, SemaphoreSlim>(),
+            new ConcurrentDictionary<string, DateTimeOffset>(),
+            pipeline,
+            middleware,
+            wsChannel,
+            agentRuntime,
+            new Dictionary<string, IChannelAdapter>(StringComparer.Ordinal)
+            {
+                ["whatsapp"] = adapter
+            },
+            config,
+            cronScheduler: null,
+            heartbeatService,
+            toolApprovalService,
+            approvalAuditStore,
+            pairingManager,
+            commandProcessor,
+            operations);
+
+        await pipeline.InboundWriter.WriteAsync(new InboundMessage
+        {
+            ChannelId = "whatsapp",
+            SenderId = "user-1",
+            Text = "hello",
+            MessageId = "msg-cancel"
+        });
+
+        await WaitForAsync(
+            () => adapter.TypingEvents.Count >= 2,
+            TimeSpan.FromSeconds(2),
+            "Timed out waiting for bridged typing cleanup after cancellation.");
+
+        Assert.Collection(
+            adapter.TypingEvents,
+            evt => Assert.True(evt.IsTyping),
+            evt => Assert.False(evt.IsTyping));
+        Assert.False(adapter.TryRead(out _));
+    }
+
     private static HeartbeatConfigDto CreateManagedHeartbeatConfig()
         => new()
         {
@@ -823,6 +1169,20 @@ public sealed class GatewayWorkersTests
         }
 
         throw new TimeoutException("Timed out waiting for managed heartbeat status.");
+    }
+
+    private static async Task WaitForAsync(Func<bool> predicate, TimeSpan timeout, string message)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            if (predicate())
+                return;
+
+            await Task.Delay(25);
+        }
+
+        throw new TimeoutException(message);
     }
 
     private sealed class TestApplicationLifetime : IHostApplicationLifetime, IDisposable
@@ -892,5 +1252,55 @@ public sealed class GatewayWorkersTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingBridgedChannelAdapter(string channelId) : IBridgedChannelControl
+    {
+        private readonly Channel<OutboundMessage> _messages = Channel.CreateUnbounded<OutboundMessage>();
+
+        public string ChannelId { get; } = channelId;
+        public string? SelfId { get; init; }
+        public IReadOnlyList<string> SelfIds => string.IsNullOrWhiteSpace(SelfId) ? [] : [SelfId];
+        public List<(string RecipientId, bool IsTyping)> TypingEvents { get; } = [];
+        public List<string> ReadReceiptMessageIds { get; } = [];
+
+        public event Func<InboundMessage, CancellationToken, ValueTask> OnMessageReceived
+        {
+            add { }
+            remove { }
+        }
+
+        public Task StartAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public ValueTask SendAsync(OutboundMessage message, CancellationToken ct)
+            => _messages.Writer.WriteAsync(message, ct);
+
+        public ValueTask SendTypingAsync(string recipientId, bool isTyping, CancellationToken ct)
+        {
+            TypingEvents.Add((recipientId, isTyping));
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask SendReadReceiptAsync(string messageId, string? remoteJid, string? participant, CancellationToken ct)
+        {
+            ReadReceiptMessageIds.Add(messageId);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _messages.Writer.TryComplete();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<OutboundMessage> ReadAsync(CancellationToken ct)
+            => _messages.Reader.ReadAsync(ct);
+
+        public bool TryRead(out OutboundMessage? message)
+        {
+            var success = _messages.Reader.TryRead(out var captured);
+            message = captured;
+            return success;
+        }
     }
 }

@@ -76,6 +76,7 @@ internal static class RuntimeInitializationExtensions
         {
             ["websocket"] = wsChannel
         };
+        FirstPartyWhatsAppWorkerHost? whatsAppWorkerHost = null;
 
         if (smsChannel is not null)
             channelAdapters["sms"] = smsChannel;
@@ -85,7 +86,19 @@ internal static class RuntimeInitializationExtensions
 
         if (config.Channels.WhatsApp.Enabled)
         {
-            if (config.Channels.WhatsApp.Type == "bridge")
+            if (string.Equals(config.Channels.WhatsApp.Type, "first_party_worker", StringComparison.OrdinalIgnoreCase))
+            {
+                var launchSpec = FirstPartyWhatsAppWorkerHost.ResolveLaunchSpec(config.Channels.WhatsApp.FirstPartyWorker);
+                whatsAppWorkerHost = new FirstPartyWhatsAppWorkerHost(
+                    Path.Combine(AppContext.BaseDirectory, "Plugins", "plugin-bridge.mjs"),
+                    launchSpec,
+                    loggerFactory.CreateLogger<FirstPartyWhatsAppWorkerHost>(),
+                    config.Plugins.Transport);
+                var workerChannels = await whatsAppWorkerHost.LoadAsync(config.Channels.WhatsApp.FirstPartyWorker, app.Lifetime.ApplicationStopping);
+                foreach (var workerChannel in workerChannels)
+                    channelAdapters[workerChannel.ChannelId] = workerChannel;
+            }
+            else if (config.Channels.WhatsApp.Type == "bridge")
                 channelAdapters["whatsapp"] = app.Services.GetRequiredService<WhatsAppBridgeChannel>();
             else
                 channelAdapters["whatsapp"] = app.Services.GetRequiredService<WhatsAppChannel>();
@@ -266,7 +279,9 @@ internal static class RuntimeInitializationExtensions
             TwilioSmsWebhookHandler = smsWebhookHandler,
             PluginHost = pluginHost,
             NativeDynamicPluginHost = nativeDynamicPluginHost,
-            RegisteredToolNames = tools.Select(t => t.Name).ToFrozenSet(StringComparer.Ordinal)
+            WhatsAppWorkerHost = whatsAppWorkerHost,
+            RegisteredToolNames = tools.Select(t => t.Name).ToFrozenSet(StringComparer.Ordinal),
+            ChannelAuthEvents = WireChannelAuthEvents(channelAdapters)
         };
 
         pluginHealth.SetRuntimeReports(runtime.PluginReports, pluginHost, nativeDynamicPluginHost);
@@ -751,5 +766,19 @@ internal static class RuntimeInitializationExtensions
                 };
             })
             .ToArray();
+    }
+
+    private static ChannelAuthEventStore WireChannelAuthEvents(
+        IReadOnlyDictionary<string, IChannelAdapter> channelAdapters)
+    {
+        var store = new ChannelAuthEventStore();
+        foreach (var adapter in channelAdapters.Values)
+        {
+            if (adapter is Agent.Plugins.BridgedChannelAdapter bridged)
+            {
+                bridged.OnAuthEvent += store.Record;
+            }
+        }
+        return store;
     }
 }

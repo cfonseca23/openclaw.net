@@ -61,7 +61,7 @@ public sealed class WhatsAppBridgeChannel : IChannelAdapter
 
         try
         {
-            var response = await _http.SendAsync(request, ct);
+            using var response = await _http.SendAsync(request, ct);
             response.EnsureSuccessStatusCode();
             _logger.LogInformation("Sent WhatsApp Bridge message to {RecipientId}", outbound.RecipientId);
         }

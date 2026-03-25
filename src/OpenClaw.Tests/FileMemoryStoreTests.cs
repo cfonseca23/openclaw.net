@@ -63,4 +63,53 @@ public sealed class FileMemoryStoreTests
             Directory.Delete(storagePath, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task GetSessionAsync_ConcurrentLoads_ReturnCanonicalCachedInstance()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-file-memory-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var writerStore = new FileMemoryStore(storagePath, 4);
+            var session = new Session
+            {
+                Id = "canonical-session",
+                ChannelId = "test",
+                SenderId = "user"
+            };
+
+            for (var i = 0; i < 256; i++)
+            {
+                session.History.Add(new ChatTurn
+                {
+                    Role = i % 2 == 0 ? "user" : "assistant",
+                    Content = new string((char)('a' + (i % 26)), 512)
+                });
+            }
+
+            await writerStore.SaveSessionAsync(session, CancellationToken.None);
+
+            var readerStore = new FileMemoryStore(storagePath, 4);
+            var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tasks = Enumerable.Range(0, 16)
+                .Select(async _ =>
+                {
+                    await gate.Task;
+                    return await readerStore.GetSessionAsync(session.Id, CancellationToken.None);
+                })
+                .ToArray();
+
+            gate.SetResult(true);
+            var loadedSessions = await Task.WhenAll(tasks);
+
+            var canonical = Assert.IsType<Session>(loadedSessions[0]);
+            Assert.All(loadedSessions, item => Assert.Same(canonical, Assert.IsType<Session>(item)));
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
 }

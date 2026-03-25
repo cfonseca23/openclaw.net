@@ -683,6 +683,20 @@ public sealed class PluginBridgeIntegrationTests : IDisposable
     private static string ToJsString(string value)
         => JsonSerializer.Serialize(value);
 
+    private static async Task<string> WaitForFileTextAsync(string path, TimeSpan timeout)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (File.Exists(path))
+                return await File.ReadAllTextAsync(path);
+
+            await Task.Delay(25);
+        }
+
+        throw new TimeoutException($"Timed out waiting for file '{path}'.");
+    }
+
     private async Task<BridgeMemoryMeasurement> MeasureBridgeMemoryAsync(string pluginDir, string pluginId)
     {
         await using var bridge = new PluginBridgeProcess(GetBridgeScriptPath(), new TestLogger());
@@ -894,26 +908,43 @@ public sealed class PluginBridgeIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadAsync_AotMode_BlocksJitOnlyBridgeCapabilities()
+    public async Task LoadAsync_AotMode_AllowsBridgeCapabilities()
     {
         if (!HasNode()) return;
 
         var pluginDir = CreatePlugin(
-            "aot-blocked-plugin",
+            "aot-bridge-plugin",
             "index.js",
             """
             module.exports = function(api) {
-              api.registerChannel({ id: "jit-only-channel" });
+              api.registerChannel({
+                id: "jit-channel",
+                start: async () => {},
+                send: async () => {},
+                stop: async () => {}
+              });
               api.registerCommand({
                 name: "jitcmd",
                 description: "jit command",
                 handler: async () => "ok"
               });
+              api.registerProvider({
+                id: "jit-provider",
+                models: ["jit-model"],
+                complete: async () => ({ text: "provider-ok" })
+              });
+              api.on("tool:before", async () => true);
+              api.on("tool:after", async () => {});
+              api.registerService({
+                id: "svc",
+                start: async () => {},
+                stop: async () => {}
+              });
               api.registerTool({
-                name: "aot_blocked_echo",
-                description: "AOT blocked echo",
+                name: "aot_bridge_echo",
+                description: "AOT bridge echo",
                 parameters: { type: "object", properties: {} },
-                execute: async () => "blocked"
+                execute: async () => "loaded"
               });
             };
             """);
@@ -928,14 +959,22 @@ public sealed class PluginBridgeIntegrationTests : IDisposable
 
         var tools = await host.LoadAsync(null, CancellationToken.None);
 
-        Assert.Empty(tools);
-        var report = Assert.Single(host.Reports, r => r.PluginId == "aot-blocked-plugin");
-        Assert.False(report.Loaded);
-        Assert.True(report.BlockedByRuntimeMode);
+        var tool = Assert.Single(tools);
+        Assert.Equal("loaded", await tool.ExecuteAsync("{}", CancellationToken.None));
+        Assert.Single(host.ChannelAdapters);
+        Assert.Single(host.CommandRegistrations);
+        Assert.Single(host.ProviderRegistrations);
+        Assert.Single(host.ToolHooks);
+        var report = Assert.Single(host.Reports, r => r.PluginId == "aot-bridge-plugin");
+        Assert.True(report.Loaded);
+        Assert.False(report.BlockedByRuntimeMode);
         Assert.Equal("aot", report.EffectiveRuntimeMode);
+        Assert.Contains(PluginCapabilityPolicy.Tools, report.RequestedCapabilities);
+        Assert.Contains(PluginCapabilityPolicy.Services, report.RequestedCapabilities);
         Assert.Contains(PluginCapabilityPolicy.Channels, report.RequestedCapabilities);
         Assert.Contains(PluginCapabilityPolicy.Commands, report.RequestedCapabilities);
-        Assert.Contains(report.Diagnostics, d => d.Code == "jit_mode_required");
+        Assert.Contains(PluginCapabilityPolicy.Providers, report.RequestedCapabilities);
+        Assert.Contains(PluginCapabilityPolicy.Hooks, report.RequestedCapabilities);
     }
 
     [Fact]
@@ -1048,6 +1087,212 @@ public sealed class PluginBridgeIntegrationTests : IDisposable
 
         var result = await tool.ExecuteAsync("""{"text":"hello"}""", CancellationToken.None);
         Assert.Equal("echo:hello", result);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BridgeRichChannelProtocol_PropagatesSelfIdAuthMediaAndControlRpc(bool useAotMode)
+    {
+        if (!HasNode()) return;
+
+        var sendPath = Path.Combine(_tempDir, "whatsapp-send.json");
+        var typingPath = Path.Combine(_tempDir, "whatsapp-typing.json");
+        var receiptPath = Path.Combine(_tempDir, "whatsapp-receipt.json");
+        var reactionPath = Path.Combine(_tempDir, "whatsapp-reaction.json");
+
+        var pluginDir = CreatePlugin(
+            "whatsapp-rich-plugin",
+            "index.js",
+            $$"""
+            const { writeFileSync } = require("node:fs");
+
+            module.exports = function(api) {
+              const channel = {
+                id: "whatsapp",
+                start: async () => {
+                  channel.emitAuthEvent({ state: "qr_code", data: "qr-payload", accountId: "acc-1" });
+                  setTimeout(() => {
+                    channel.receive({
+                      senderId: "user1@wa",
+                      senderName: "User One",
+                      text: "caption",
+                      sessionId: "sess-123",
+                      messageId: "msg-1",
+                      replyToMessageId: "msg-0",
+                      isGroup: true,
+                      groupId: "group-1@wa",
+                      groupName: "Test Group",
+                      mentionedIds: ["bot@wa"],
+                      mediaType: "video",
+                      mediaUrl: "https://cdn.example/video.mp4",
+                      mediaMimeType: "video/mp4",
+                      mediaFileName: "clip.mp4"
+                    });
+                  }, 25);
+                  return { selfId: "bot@wa" };
+                },
+                send: async (msg) => writeFileSync({{ToJsString(sendPath)}}, JSON.stringify(msg)),
+                typing: async (msg) => writeFileSync({{ToJsString(typingPath)}}, JSON.stringify(msg)),
+                readReceipt: async (msg) => writeFileSync({{ToJsString(receiptPath)}}, JSON.stringify(msg)),
+                react: async (msg) => writeFileSync({{ToJsString(reactionPath)}}, JSON.stringify(msg)),
+                stop: async () => {}
+              };
+              api.registerChannel(channel);
+              api.registerTool({
+                name: "whatsapp_bridge_echo",
+                description: "Bridge echo",
+                parameters: { type: "object", properties: {} },
+                execute: async () => "ok"
+              });
+            };
+            """);
+
+        await using var host = CreateHost(
+            new PluginsConfig
+            {
+                Enabled = true,
+                Load = new PluginLoadConfig { Paths = [pluginDir] }
+            },
+            useAotMode
+                ? RuntimeModeResolver.Resolve(new RuntimeConfig { Mode = "aot" }, dynamicCodeSupported: true)
+                : null);
+
+        _ = await host.LoadAsync(null, CancellationToken.None);
+        var adapter = Assert.IsType<BridgedChannelAdapter>(Assert.Single(host.ChannelAdapters));
+
+        var authTcs = new TaskCompletionSource<BridgeChannelAuthEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inboundTcs = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        adapter.OnAuthEvent += evt => authTcs.TrySetResult(evt);
+        adapter.OnMessageReceived += (msg, _) =>
+        {
+            inboundTcs.TrySetResult(msg);
+            return ValueTask.CompletedTask;
+        };
+
+        await adapter.StartAsync(CancellationToken.None);
+
+        var authEvt = await authTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var inbound = await inboundTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("bot@wa", adapter.SelfId);
+        Assert.Equal("qr_code", authEvt.State);
+        Assert.Equal("qr-payload", authEvt.Data);
+        Assert.Equal("acc-1", authEvt.AccountId);
+        Assert.True(authEvt.UpdatedAtUtc > DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        Assert.Equal("user1@wa", inbound.SenderId);
+        Assert.True(inbound.IsGroup);
+        Assert.Equal("group-1@wa", inbound.GroupId);
+        Assert.Equal("Test Group", inbound.GroupName);
+        Assert.Equal("video", inbound.MediaType);
+        Assert.Equal("https://cdn.example/video.mp4", inbound.MediaUrl);
+        Assert.Equal("video/mp4", inbound.MediaMimeType);
+        Assert.Equal("clip.mp4", inbound.MediaFileName);
+        Assert.NotNull(inbound.MentionedIds);
+        Assert.Contains("[VIDEO_URL:https://cdn.example/video.mp4]", inbound.Text, StringComparison.Ordinal);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelId = "whatsapp",
+            RecipientId = "group-1@wa",
+            Text = "[IMAGE_URL:https://cdn.example/image.png]\nhello world",
+            SessionId = "sess-out",
+            ReplyToMessageId = "msg-1",
+            Subject = "subject"
+        }, CancellationToken.None);
+        await adapter.SendTypingAsync("group-1@wa", true, CancellationToken.None);
+        await adapter.SendReadReceiptAsync("msg-1", "group-1@wa", "sender@wa", CancellationToken.None);
+        await adapter.SendReactionAsync("msg-1", "👍", "group-1@wa", "sender@wa", CancellationToken.None);
+
+        var sendPayload = JsonDocument.Parse(await WaitForFileTextAsync(sendPath, TimeSpan.FromSeconds(5))).RootElement;
+        Assert.Equal("group-1@wa", sendPayload.GetProperty("recipientId").GetString());
+        Assert.Equal("hello world", sendPayload.GetProperty("text").GetString());
+        Assert.Equal("sess-out", sendPayload.GetProperty("sessionId").GetString());
+        Assert.Equal("msg-1", sendPayload.GetProperty("replyToMessageId").GetString());
+        Assert.Equal("subject", sendPayload.GetProperty("subject").GetString());
+        var attachment = Assert.Single(sendPayload.GetProperty("attachments").EnumerateArray());
+        Assert.Equal("image", attachment.GetProperty("type").GetString());
+        Assert.Equal("https://cdn.example/image.png", attachment.GetProperty("url").GetString());
+
+        var typingPayload = JsonDocument.Parse(await WaitForFileTextAsync(typingPath, TimeSpan.FromSeconds(5))).RootElement;
+        Assert.Equal("group-1@wa", typingPayload.GetProperty("recipientId").GetString());
+        Assert.True(typingPayload.GetProperty("isTyping").GetBoolean());
+
+        var receiptPayload = JsonDocument.Parse(await WaitForFileTextAsync(receiptPath, TimeSpan.FromSeconds(5))).RootElement;
+        Assert.Equal("msg-1", receiptPayload.GetProperty("messageId").GetString());
+
+        var reactionPayload = JsonDocument.Parse(await WaitForFileTextAsync(reactionPath, TimeSpan.FromSeconds(5))).RootElement;
+        Assert.Equal("msg-1", reactionPayload.GetProperty("messageId").GetString());
+        Assert.Equal("👍", reactionPayload.GetProperty("emoji").GetString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BridgedChannelAdapter_RestartAsync_StopsAndRefreshesSelfId(bool useAotMode)
+    {
+        if (!HasNode()) return;
+
+        var statePath = Path.Combine(_tempDir, "whatsapp-restart-state.json");
+        var pluginDir = CreatePlugin(
+            "whatsapp-restart-plugin",
+            "index.js",
+            $$"""
+            const { readFileSync, writeFileSync, existsSync } = require("node:fs");
+
+            module.exports = function(api) {
+              const loadState = () => existsSync({{ToJsString(statePath)}})
+                ? JSON.parse(readFileSync({{ToJsString(statePath)}}, "utf8"))
+                : { startCount: 0, stopCount: 0 };
+              const saveState = (state) => writeFileSync({{ToJsString(statePath)}}, JSON.stringify(state));
+              const channel = {
+                id: "whatsapp",
+                start: async () => {
+                  const state = loadState();
+                  state.startCount += 1;
+                  saveState(state);
+                  return { selfId: `bot-${state.startCount}@wa` };
+                },
+                send: async () => {},
+                stop: async () => {
+                  const state = loadState();
+                  state.stopCount += 1;
+                  saveState(state);
+                }
+              };
+              api.registerChannel(channel);
+              api.registerTool({
+                name: "whatsapp_restart_echo",
+                description: "Bridge echo",
+                parameters: { type: "object", properties: {} },
+                execute: async () => "ok"
+              });
+            };
+            """);
+
+        await using var host = CreateHost(
+            new PluginsConfig
+            {
+                Enabled = true,
+                Load = new PluginLoadConfig { Paths = [pluginDir] }
+            },
+            useAotMode
+                ? RuntimeModeResolver.Resolve(new RuntimeConfig { Mode = "aot" }, dynamicCodeSupported: true)
+                : null);
+
+        _ = await host.LoadAsync(null, CancellationToken.None);
+        var adapter = Assert.IsType<BridgedChannelAdapter>(Assert.Single(host.ChannelAdapters));
+
+        await adapter.StartAsync(CancellationToken.None);
+        Assert.Equal("bot-1@wa", adapter.SelfId);
+
+        await adapter.RestartAsync(CancellationToken.None);
+        Assert.Equal("bot-2@wa", adapter.SelfId);
+
+        var state = JsonDocument.Parse(await WaitForFileTextAsync(statePath, TimeSpan.FromSeconds(5))).RootElement;
+        Assert.Equal(2, state.GetProperty("startCount").GetInt32());
+        Assert.Equal(1, state.GetProperty("stopCount").GetInt32());
     }
 
     [Theory]

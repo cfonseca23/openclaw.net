@@ -322,6 +322,33 @@
             flex-wrap: wrap;
             margin-bottom: 0.6rem;
         }
+
+        .whatsapp-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 0.8rem;
+        }
+
+        .whatsapp-auth-grid {
+            display: grid;
+            grid-template-columns: minmax(280px, 1.5fr) minmax(220px, 1fr);
+            gap: 0.8rem;
+            margin-top: 0.8rem;
+        }
+
+        .qr-preview {
+            display: grid;
+            justify-items: center;
+            gap: 0.75rem;
+        }
+
+        .qr-preview img {
+            width: min(280px, 100%);
+            background: white;
+            border-radius: 14px;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+        }
     </style>
 </head>
 <body>
@@ -348,6 +375,7 @@
         <a href="#ops-section">Ops</a>
         <a href="#sessions-section">Sessions</a>
         <a href="#settings-section">Settings</a>
+        <a href="#whatsapp-section">WhatsApp</a>
         <a href="#channels-section">Channels</a>
     </nav>
 
@@ -789,6 +817,167 @@
                 <div id="allowlists-output" class="muted">Loading…</div>
             </div>
         </section>
+
+        <section id="whatsapp-section" class="grid">
+            <div class="card">
+                <div class="section-title">
+                    <div>
+                        <h2>WhatsApp Setup</h2>
+                        <div class="muted">Typed setup surface for official, built-in bridge, and plugin-backed bridge modes.</div>
+                    </div>
+                    <div class="actions">
+                        <button id="whatsapp-reload-button" class="secondary">Reload</button>
+                        <button id="whatsapp-restart-button" class="secondary">Restart Channel</button>
+                        <button id="whatsapp-save-button">Save Setup</button>
+                    </div>
+                </div>
+
+                <div id="whatsapp-setup-status" class="muted">Loading WhatsApp setup…</div>
+                <div id="whatsapp-meta" class="pill-row"></div>
+
+                <div class="whatsapp-grid" style="margin-top:0.8rem;">
+                    <div class="field checkbox">
+                        <input id="wa-enabled-input" type="checkbox">
+                        <label for="wa-enabled-input">Enable WhatsApp</label>
+                    </div>
+                    <div class="field">
+                        <label for="wa-type-input">Configured type</label>
+                        <select id="wa-type-input">
+                            <option value="official">Official</option>
+                            <option value="bridge">Bridge</option>
+                            <option value="first_party_worker">First-Party Worker</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="wa-dm-policy-input">DM policy</label>
+                        <select id="wa-dm-policy-input">
+                            <option value="open">Open</option>
+                            <option value="pairing">Pairing</option>
+                            <option value="closed">Closed</option>
+                        </select>
+                    </div>
+                    <div class="field checkbox">
+                        <input id="wa-validate-signature-input" type="checkbox">
+                        <label for="wa-validate-signature-input">Validate signatures</label>
+                    </div>
+                    <div class="field">
+                        <label for="wa-webhook-path-input">Webhook path</label>
+                        <input id="wa-webhook-path-input" type="text" placeholder="/whatsapp/inbound">
+                    </div>
+                    <div class="field">
+                        <label for="wa-webhook-public-base-url-input">Webhook public base URL</label>
+                        <input id="wa-webhook-public-base-url-input" type="text" placeholder="https://example.com">
+                    </div>
+                    <div class="field">
+                        <label for="wa-webhook-verify-token-input">Verify token</label>
+                        <input id="wa-webhook-verify-token-input" type="text" placeholder="openclaw-verify">
+                    </div>
+                    <div class="field">
+                        <label for="wa-webhook-verify-token-ref-input">Verify token ref</label>
+                        <input id="wa-webhook-verify-token-ref-input" type="text" placeholder="env:WHATSAPP_VERIFY_TOKEN">
+                    </div>
+                    <div class="field">
+                        <label for="wa-webhook-app-secret-input">Webhook app secret</label>
+                        <input id="wa-webhook-app-secret-input" type="password" placeholder="Optional raw secret">
+                    </div>
+                    <div class="field">
+                        <label for="wa-webhook-app-secret-ref-input">Webhook app secret ref</label>
+                        <input id="wa-webhook-app-secret-ref-input" type="text" placeholder="env:WHATSAPP_APP_SECRET">
+                    </div>
+                    <div class="field">
+                        <label for="wa-cloud-api-token-input">Cloud API token</label>
+                        <input id="wa-cloud-api-token-input" type="password" placeholder="Optional raw token">
+                    </div>
+                    <div class="field">
+                        <label for="wa-cloud-api-token-ref-input">Cloud API token ref</label>
+                        <input id="wa-cloud-api-token-ref-input" type="text" placeholder="env:WHATSAPP_CLOUD_API_TOKEN">
+                    </div>
+                    <div class="field">
+                        <label for="wa-phone-number-id-input">Phone number ID</label>
+                        <input id="wa-phone-number-id-input" type="text" placeholder="Cloud API phone number ID">
+                    </div>
+                    <div class="field">
+                        <label for="wa-business-account-id-input">Business account ID</label>
+                        <input id="wa-business-account-id-input" type="text" placeholder="Optional">
+                    </div>
+                    <div class="field">
+                        <label for="wa-bridge-url-input">Built-in bridge URL</label>
+                        <input id="wa-bridge-url-input" type="text" placeholder="http://127.0.0.1:3000">
+                    </div>
+                    <div class="field">
+                        <label for="wa-bridge-token-input">Built-in bridge token</label>
+                        <input id="wa-bridge-token-input" type="password" placeholder="Optional raw token">
+                    </div>
+                    <div class="field">
+                        <label for="wa-bridge-token-ref-input">Built-in bridge token ref</label>
+                        <input id="wa-bridge-token-ref-input" type="text" placeholder="env:WHATSAPP_BRIDGE_TOKEN">
+                    </div>
+                    <div class="field checkbox">
+                        <input id="wa-bridge-suppress-send-exceptions-input" type="checkbox">
+                        <label for="wa-bridge-suppress-send-exceptions-input">Suppress bridge send exceptions</label>
+                    </div>
+                    <div class="field">
+                        <label for="wa-plugin-id-input">Plugin ID</label>
+                        <input id="wa-plugin-id-input" type="text" placeholder="Plugin-backed bridge target">
+                    </div>
+                    <div class="field checkbox">
+                        <input id="wa-plugin-detected-input" type="checkbox" disabled>
+                        <label for="wa-plugin-detected-input">Plugin detected</label>
+                    </div>
+                </div>
+
+                <div class="field" style="margin-top:0.8rem;">
+                    <label for="wa-plugin-config-json-input">Plugin config JSON</label>
+                    <textarea id="wa-plugin-config-json-input" rows="8" placeholder="{&quot;sessionPath&quot;:&quot;...&quot;}"></textarea>
+                </div>
+
+                <div class="field" style="margin-top:0.8rem;">
+                    <label for="wa-first-party-worker-config-json-input">First-party worker config JSON</label>
+                    <textarea id="wa-first-party-worker-config-json-input" rows="10" placeholder="{&quot;driver&quot;:&quot;baileys_csharp&quot;,&quot;accounts&quot;:[{&quot;accountId&quot;:&quot;default&quot;,&quot;sessionPath&quot;:&quot;./session/default&quot;,&quot;pairingMode&quot;:&quot;qr&quot;}]}"></textarea>
+                </div>
+
+                <div class="whatsapp-auth-grid">
+                    <div>
+                        <h3>Live Auth State</h3>
+                        <pre id="whatsapp-auth-output">Loading…</pre>
+                    </div>
+                    <div>
+                        <h3>QR Code</h3>
+                        <div class="qr-preview">
+                            <img id="whatsapp-qr-image" alt="WhatsApp QR code" hidden>
+                            <div id="whatsapp-qr-empty" class="muted">No active QR code.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="whatsapp-grid" style="margin-top:0.8rem;">
+                    <div>
+                        <h3>Warnings</h3>
+                        <pre id="whatsapp-warnings-output">None.</pre>
+                    </div>
+                    <div>
+                        <h3>Validation Errors</h3>
+                        <pre id="whatsapp-validation-errors-output">None.</pre>
+                    </div>
+                    <div>
+                        <h3>Readiness</h3>
+                        <pre id="whatsapp-readiness-output">Loading…</pre>
+                    </div>
+                    <div>
+                        <h3>Plugin Schema</h3>
+                        <pre id="whatsapp-plugin-schema-output">None.</pre>
+                    </div>
+                    <div>
+                        <h3>Plugin UI Hints</h3>
+                        <pre id="whatsapp-plugin-ui-hints-output">None.</pre>
+                    </div>
+                    <div>
+                        <h3>Notes</h3>
+                        <pre id="whatsapp-notes-output">Loading…</pre>
+                    </div>
+                </div>
+            </div>
+        </section>
     </main>
 
     <script>
@@ -891,6 +1080,41 @@
             whatsappValidateSignature: document.getElementById('whatsapp-validate-signature-input'),
             whatsappDmPolicy: document.getElementById('whatsapp-dm-policy-input')
         };
+        const whatsAppSetupStatus = document.getElementById('whatsapp-setup-status');
+        const whatsAppMeta = document.getElementById('whatsapp-meta');
+        const whatsAppAuthOutput = document.getElementById('whatsapp-auth-output');
+        const whatsAppQrImage = document.getElementById('whatsapp-qr-image');
+        const whatsAppQrEmpty = document.getElementById('whatsapp-qr-empty');
+        const whatsAppWarningsOutput = document.getElementById('whatsapp-warnings-output');
+        const whatsAppValidationErrorsOutput = document.getElementById('whatsapp-validation-errors-output');
+        const whatsAppReadinessOutput = document.getElementById('whatsapp-readiness-output');
+        const whatsAppPluginSchemaOutput = document.getElementById('whatsapp-plugin-schema-output');
+        const whatsAppPluginUiHintsOutput = document.getElementById('whatsapp-plugin-ui-hints-output');
+        const whatsAppNotesOutput = document.getElementById('whatsapp-notes-output');
+        const whatsAppInputs = {
+            enabled: document.getElementById('wa-enabled-input'),
+            type: document.getElementById('wa-type-input'),
+            dmPolicy: document.getElementById('wa-dm-policy-input'),
+            validateSignature: document.getElementById('wa-validate-signature-input'),
+            webhookPath: document.getElementById('wa-webhook-path-input'),
+            webhookPublicBaseUrl: document.getElementById('wa-webhook-public-base-url-input'),
+            webhookVerifyToken: document.getElementById('wa-webhook-verify-token-input'),
+            webhookVerifyTokenRef: document.getElementById('wa-webhook-verify-token-ref-input'),
+            webhookAppSecret: document.getElementById('wa-webhook-app-secret-input'),
+            webhookAppSecretRef: document.getElementById('wa-webhook-app-secret-ref-input'),
+            cloudApiToken: document.getElementById('wa-cloud-api-token-input'),
+            cloudApiTokenRef: document.getElementById('wa-cloud-api-token-ref-input'),
+            phoneNumberId: document.getElementById('wa-phone-number-id-input'),
+            businessAccountId: document.getElementById('wa-business-account-id-input'),
+            bridgeUrl: document.getElementById('wa-bridge-url-input'),
+            bridgeToken: document.getElementById('wa-bridge-token-input'),
+            bridgeTokenRef: document.getElementById('wa-bridge-token-ref-input'),
+            bridgeSuppressSendExceptions: document.getElementById('wa-bridge-suppress-send-exceptions-input'),
+            pluginId: document.getElementById('wa-plugin-id-input'),
+            pluginDetected: document.getElementById('wa-plugin-detected-input'),
+            pluginConfigJson: document.getElementById('wa-plugin-config-json-input'),
+            firstPartyWorkerConfigJson: document.getElementById('wa-first-party-worker-config-json-input')
+        };
 
         let csrfToken = null;
         let sessionsState = {
@@ -905,6 +1129,9 @@
         let settingsState = null;
         let heartbeatState = null;
         let approvalsPollTimer = null;
+        let whatsAppSetupState = null;
+        let whatsAppAuthState = new Map();
+        let whatsAppAuthStream = null;
 
         async function api(url, options = {}) {
             const resp = await fetch(url, {
@@ -980,6 +1207,154 @@
 
         function renderJson(target, value) {
             target.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+        }
+
+        function authStateKey(item) {
+            return `${item.channelId}\n${item.accountId || ''}`;
+        }
+
+        function formatWhatsAppAuthStates(items) {
+            if (!items || !items.length) {
+                return 'No live WhatsApp auth state.';
+            }
+
+            return items
+                .slice()
+                .sort((a, b) => String(b.updatedAtUtc || '').localeCompare(String(a.updatedAtUtc || '')))
+                .map(item => `${item.accountId || 'default'} | ${item.state} | ${item.updatedAtUtc || 'unknown'}${item.data ? `\n${item.data}` : ''}`)
+                .join('\n\n');
+        }
+
+        function syncWhatsAppQr(items) {
+            const qrState = (items || [])
+                .slice()
+                .sort((a, b) => String(b.updatedAtUtc || '').localeCompare(String(a.updatedAtUtc || '')))
+                .find(item => item.state === 'qr_code' && item.data);
+
+            if (!qrState) {
+                whatsAppQrImage.hidden = true;
+                whatsAppQrImage.removeAttribute('src');
+                whatsAppQrEmpty.hidden = false;
+                return;
+            }
+
+            const params = new URLSearchParams();
+            if (qrState.accountId) {
+                params.set('accountId', qrState.accountId);
+            }
+            params.set('t', Date.now().toString());
+            whatsAppQrImage.src = `/admin/channels/whatsapp/auth/qr.svg?${params.toString()}`;
+            whatsAppQrImage.hidden = false;
+            whatsAppQrEmpty.hidden = true;
+        }
+
+        function renderWhatsAppAuthStates() {
+            const items = Array.from(whatsAppAuthState.values());
+            whatsAppAuthOutput.textContent = formatWhatsAppAuthStates(items);
+            syncWhatsAppQr(items);
+        }
+
+        function applyWhatsAppSetup(payload) {
+            whatsAppSetupState = payload;
+            whatsAppInputs.enabled.checked = Boolean(payload.enabled);
+            whatsAppInputs.type.value = payload.configuredType || 'official';
+            whatsAppInputs.dmPolicy.value = payload.dmPolicy || 'pairing';
+            whatsAppInputs.validateSignature.checked = Boolean(payload.validateSignature);
+            whatsAppInputs.webhookPath.value = payload.webhookPath || '/whatsapp/inbound';
+            whatsAppInputs.webhookPublicBaseUrl.value = payload.webhookPublicBaseUrl || '';
+            whatsAppInputs.webhookVerifyToken.value = payload.webhookVerifyToken || 'openclaw-verify';
+            whatsAppInputs.webhookVerifyTokenRef.value = payload.webhookVerifyTokenRef || 'env:WHATSAPP_VERIFY_TOKEN';
+            whatsAppInputs.webhookAppSecret.value = payload.webhookAppSecret || '';
+            whatsAppInputs.webhookAppSecretRef.value = payload.webhookAppSecretRef || 'env:WHATSAPP_APP_SECRET';
+            whatsAppInputs.cloudApiToken.value = payload.cloudApiToken || '';
+            whatsAppInputs.cloudApiTokenRef.value = payload.cloudApiTokenRef || 'env:WHATSAPP_CLOUD_API_TOKEN';
+            whatsAppInputs.phoneNumberId.value = payload.phoneNumberId || '';
+            whatsAppInputs.businessAccountId.value = payload.businessAccountId || '';
+            whatsAppInputs.bridgeUrl.value = payload.bridgeUrl || '';
+            whatsAppInputs.bridgeToken.value = payload.bridgeToken || '';
+            whatsAppInputs.bridgeTokenRef.value = payload.bridgeTokenRef || 'env:WHATSAPP_BRIDGE_TOKEN';
+            whatsAppInputs.bridgeSuppressSendExceptions.checked = Boolean(payload.bridgeSuppressSendExceptions);
+            whatsAppInputs.pluginId.value = payload.pluginId || '';
+            whatsAppInputs.pluginDetected.checked = Boolean(payload.pluginDetected);
+            whatsAppInputs.pluginConfigJson.value = payload.pluginConfigJson || '';
+            whatsAppInputs.firstPartyWorkerConfigJson.value = payload.firstPartyWorkerConfigJson || '';
+
+            whatsAppSetupStatus.textContent = payload.message || 'WhatsApp setup loaded.';
+            whatsAppMeta.innerHTML = [
+                `<span class="pill">backend: ${payload.activeBackend || 'unknown'}</span>`,
+                `<span class="pill">restart supported: ${payload.restartSupported ? 'yes' : 'no'}</span>`,
+                `<span class="pill">restart required: ${payload.restartRequired ? 'yes' : 'no'}</span>`
+            ].join('');
+            whatsAppWarningsOutput.textContent = (payload.warnings || []).length ? payload.warnings.join('\n') : 'None.';
+            whatsAppValidationErrorsOutput.textContent = (payload.validationErrors || []).length ? payload.validationErrors.join('\n') : 'None.';
+            renderJson(whatsAppReadinessOutput, payload.readiness || { status: 'unknown' });
+            whatsAppPluginSchemaOutput.textContent = payload.firstPartyWorkerConfigSchemaJson || payload.pluginConfigSchemaJson || 'None.';
+            whatsAppPluginUiHintsOutput.textContent = payload.pluginUiHintsJson || 'None.';
+            whatsAppNotesOutput.textContent = [
+                `Derived webhook URL: ${payload.derivedWebhookUrl || 'n/a'}`,
+                `Plugin warning: ${payload.pluginWarning || 'none'}`,
+                `Restart hint: ${payload.restartHint || 'none'}`
+            ].join('\n');
+
+            whatsAppAuthState = new Map((payload.authStates || []).map(item => [authStateKey(item), item]));
+            renderWhatsAppAuthStates();
+        }
+
+        function collectWhatsAppSetupForm() {
+            const nullIfBlank = value => {
+                const trimmed = (value || '').trim();
+                return trimmed.length ? trimmed : null;
+            };
+
+            return {
+                enabled: whatsAppInputs.enabled.checked,
+                type: whatsAppInputs.type.value,
+                dmPolicy: whatsAppInputs.dmPolicy.value,
+                validateSignature: whatsAppInputs.validateSignature.checked,
+                webhookPath: whatsAppInputs.webhookPath.value.trim() || '/whatsapp/inbound',
+                webhookPublicBaseUrl: nullIfBlank(whatsAppInputs.webhookPublicBaseUrl.value),
+                webhookVerifyToken: whatsAppInputs.webhookVerifyToken.value.trim() || 'openclaw-verify',
+                webhookVerifyTokenRef: whatsAppInputs.webhookVerifyTokenRef.value.trim() || 'env:WHATSAPP_VERIFY_TOKEN',
+                webhookAppSecret: nullIfBlank(whatsAppInputs.webhookAppSecret.value),
+                webhookAppSecretRef: whatsAppInputs.webhookAppSecretRef.value.trim() || 'env:WHATSAPP_APP_SECRET',
+                cloudApiToken: nullIfBlank(whatsAppInputs.cloudApiToken.value),
+                cloudApiTokenRef: whatsAppInputs.cloudApiTokenRef.value.trim() || 'env:WHATSAPP_CLOUD_API_TOKEN',
+                phoneNumberId: nullIfBlank(whatsAppInputs.phoneNumberId.value),
+                businessAccountId: nullIfBlank(whatsAppInputs.businessAccountId.value),
+                bridgeUrl: nullIfBlank(whatsAppInputs.bridgeUrl.value),
+                bridgeToken: nullIfBlank(whatsAppInputs.bridgeToken.value),
+                bridgeTokenRef: whatsAppInputs.bridgeTokenRef.value.trim() || 'env:WHATSAPP_BRIDGE_TOKEN',
+                bridgeSuppressSendExceptions: whatsAppInputs.bridgeSuppressSendExceptions.checked,
+                pluginId: nullIfBlank(whatsAppInputs.pluginId.value),
+                pluginConfigJson: nullIfBlank(whatsAppInputs.pluginConfigJson.value),
+                firstPartyWorkerConfigJson: nullIfBlank(whatsAppInputs.firstPartyWorkerConfigJson.value)
+            };
+        }
+
+        function closeWhatsAppAuthStream() {
+            if (!whatsAppAuthStream) return;
+            whatsAppAuthStream.close();
+            whatsAppAuthStream = null;
+        }
+
+        function startWhatsAppAuthStream() {
+            closeWhatsAppAuthStream();
+
+            const stream = new EventSource('/admin/channels/whatsapp/auth/stream');
+            stream.onmessage = event => {
+                try {
+                    const item = JSON.parse(event.data);
+                    whatsAppAuthState.set(authStateKey(item), item);
+                    renderWhatsAppAuthStates();
+                } catch (err) {
+                    console.error('Failed to parse WhatsApp auth event', err);
+                }
+            };
+            stream.onerror = () => {
+                whatsAppSetupStatus.textContent = 'WhatsApp auth stream disconnected. Reload to reconnect.';
+                closeWhatsAppAuthStream();
+            };
+            whatsAppAuthStream = stream;
         }
 
         function showFlash(message, tone = 'ok') {
@@ -1887,10 +2262,66 @@
             applySettingsForm(data.settings, data);
         }
 
+        async function loadWhatsAppSetup() {
+            const { resp, data } = await api('/admin/channels/whatsapp/setup');
+            if (!resp.ok) {
+                whatsAppSetupStatus.textContent = `WhatsApp setup request failed (${resp.status})`;
+                whatsAppMeta.innerHTML = '';
+                whatsAppAuthOutput.textContent = 'WhatsApp setup unavailable.';
+                whatsAppWarningsOutput.textContent = 'WhatsApp setup unavailable.';
+                whatsAppValidationErrorsOutput.textContent = 'WhatsApp setup unavailable.';
+                whatsAppReadinessOutput.textContent = 'WhatsApp setup unavailable.';
+                whatsAppPluginSchemaOutput.textContent = 'WhatsApp setup unavailable.';
+                whatsAppPluginUiHintsOutput.textContent = 'WhatsApp setup unavailable.';
+                whatsAppNotesOutput.textContent = 'WhatsApp setup unavailable.';
+                closeWhatsAppAuthStream();
+                return;
+            }
+
+            applyWhatsAppSetup(data);
+            startWhatsAppAuthStream();
+        }
+
+        async function saveWhatsAppSetup() {
+            const { resp, data } = await mutate('/admin/channels/whatsapp/setup', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(collectWhatsAppSetupForm())
+            });
+
+            if (!resp.ok) {
+                if (data && typeof data === 'object' && !Array.isArray(data)) {
+                    applyWhatsAppSetup(data);
+                }
+                showFlash((data?.validationErrors || []).join(' ') || `WhatsApp setup save failed (${resp.status}).`, 'error');
+                return;
+            }
+
+            applyWhatsAppSetup(data);
+            showFlash(data.message || 'WhatsApp setup saved.', data.restartRequired ? 'warn' : 'ok');
+            await loadSummary();
+            await loadDoctor();
+        }
+
+        async function restartWhatsApp() {
+            const { resp, data } = await mutate('/admin/channels/whatsapp/restart', {
+                method: 'POST'
+            });
+
+            if (!resp.ok) {
+                showFlash(data?.error || `WhatsApp restart failed (${resp.status}).`, 'error');
+                return;
+            }
+
+            applyWhatsAppSetup(data);
+            showFlash(data.message || 'WhatsApp channel restarted.', 'ok');
+        }
+
         async function refreshAll() {
             loadMcpGuide();
             const authed = await syncAuth();
             if (!authed) {
+                closeWhatsAppAuthStream();
                 clearFlash();
                 renderJson(summaryOutput, 'Login required.');
                 renderJson(integrationDashboardOutput, 'Login required.');
@@ -1912,6 +2343,15 @@
                 settingsRestartFields.innerHTML = '<li>Login required.</li>';
                 settingsWarnings.innerHTML = '<li>Login required.</li>';
                 settingsReadiness.innerHTML = '<div class="readiness-card"><strong>Login required.</strong></div>';
+                whatsAppSetupStatus.textContent = 'Login required.';
+                whatsAppMeta.innerHTML = '';
+                whatsAppAuthOutput.textContent = 'Login required.';
+                whatsAppWarningsOutput.textContent = 'Login required.';
+                whatsAppValidationErrorsOutput.textContent = 'Login required.';
+                whatsAppReadinessOutput.textContent = 'Login required.';
+                whatsAppPluginSchemaOutput.textContent = 'Login required.';
+                whatsAppPluginUiHintsOutput.textContent = 'Login required.';
+                whatsAppNotesOutput.textContent = 'Login required.';
                 if (approvalsPollTimer) {
                     clearInterval(approvalsPollTimer);
                     approvalsPollTimer = null;
@@ -1935,6 +2375,7 @@
                 loadSessions(),
                 loadHeartbeat(),
                 loadSettings(),
+                loadWhatsAppSetup(),
                 loadPairing(),
                 loadAllowlists()
             ]);
@@ -1967,6 +2408,12 @@
 
         refreshButton.addEventListener('click', refreshAll);
         document.getElementById('retention-status-button').addEventListener('click', loadRetention);
+        document.getElementById('whatsapp-reload-button').addEventListener('click', async () => {
+            await loadWhatsAppSetup();
+            showFlash('WhatsApp setup reloaded.', 'ok');
+        });
+        document.getElementById('whatsapp-save-button').addEventListener('click', saveWhatsAppSetup);
+        document.getElementById('whatsapp-restart-button').addEventListener('click', restartWhatsApp);
         document.getElementById('retention-dry-run-button').addEventListener('click', async () => {
             const { resp, data } = await mutate('/memory/retention/sweep?dryRun=true', { method: 'POST' });
             renderJson(retentionOutput, resp.ok ? data : `Retention dry run failed (${resp.status})`);
@@ -2244,6 +2691,7 @@
         document.getElementById('integration-message-send-button').addEventListener('click', sendIntegrationMessage);
 
         window.addEventListener('beforeunload', () => {
+            closeWhatsAppAuthStream();
             if (approvalsPollTimer) {
                 clearInterval(approvalsPollTimer);
             }

@@ -6,7 +6,11 @@ public enum MediaMarkerKind : byte
     ImagePath,
     FileUrl,
     FilePath,
-    TelegramImageFileId
+    TelegramImageFileId,
+    VideoUrl,
+    AudioUrl,
+    DocumentUrl,
+    StickerUrl
 }
 
 public sealed record MediaMarker(MediaMarkerKind Kind, string Value);
@@ -65,6 +69,30 @@ public static class MediaMarkerProtocol
         if (TryParseBracketValue(line, "FILE_PATH:", out var filePath))
         {
             marker = new MediaMarker(MediaMarkerKind.FilePath, filePath);
+            return true;
+        }
+
+        if (TryParseBracketValue(line, "VIDEO_URL:", out var videoUrl))
+        {
+            marker = new MediaMarker(MediaMarkerKind.VideoUrl, videoUrl);
+            return true;
+        }
+
+        if (TryParseBracketValue(line, "AUDIO_URL:", out var audioUrl))
+        {
+            marker = new MediaMarker(MediaMarkerKind.AudioUrl, audioUrl);
+            return true;
+        }
+
+        if (TryParseBracketValue(line, "DOCUMENT_URL:", out var documentUrl))
+        {
+            marker = new MediaMarker(MediaMarkerKind.DocumentUrl, documentUrl);
+            return true;
+        }
+
+        if (TryParseBracketValue(line, "STICKER_URL:", out var stickerUrl))
+        {
+            marker = new MediaMarker(MediaMarkerKind.StickerUrl, stickerUrl);
             return true;
         }
 

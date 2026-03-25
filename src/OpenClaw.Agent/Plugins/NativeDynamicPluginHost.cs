@@ -85,7 +85,10 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
             foreach (var plugin in enabled)
             {
                 var requestedCapabilities = DetermineRequestedCapabilities(plugin.Manifest.Capabilities, ResolveSkillDirectories(plugin));
-                var blockedCapabilities = PluginCapabilityPolicy.GetBlockedCapabilities(_runtimeState.EffectiveMode, requestedCapabilities);
+                var blockedCapabilities = PluginCapabilityPolicy.GetBlockedCapabilities(
+                    _runtimeState.EffectiveMode,
+                    requestedCapabilities,
+                    PluginCapabilityPolicy.ExecutionHostKind.NativeDynamic);
                 var message =
                     $"Dynamic native plugin '{plugin.Manifest.Id}' requires JIT runtime mode for capabilities: {string.Join(", ", blockedCapabilities)}.";
 

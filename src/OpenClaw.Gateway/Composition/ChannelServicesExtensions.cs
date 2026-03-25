@@ -12,7 +12,9 @@ internal static class ChannelServicesExtensions
         if (config.Channels.WhatsApp.Enabled)
         {
             services.AddSingleton(config.Channels.WhatsApp);
-            services.AddSingleton<WhatsAppWebhookHandler>();
+            if (!string.Equals(config.Channels.WhatsApp.Type, "first_party_worker", StringComparison.OrdinalIgnoreCase))
+                services.AddSingleton<WhatsAppWebhookHandler>();
+
             if (config.Channels.WhatsApp.Type == "bridge")
             {
                 services.AddSingleton<WhatsAppBridgeChannel>(sp =>

@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using OpenClaw.Agent.Plugins;
+using OpenClaw.Channels;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Pipeline;
@@ -10,6 +12,7 @@ using OpenClaw.Core.Security;
 using OpenClaw.Gateway;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Composition;
+using QRCoder;
 
 namespace OpenClaw.Gateway.Endpoints;
 
@@ -24,6 +27,7 @@ internal static class AdminEndpoints
     {
         var browserSessions = app.Services.GetRequiredService<BrowserSessionAuthService>();
         var adminSettings = app.Services.GetRequiredService<AdminSettingsService>();
+        var pluginAdminSettings = app.Services.GetRequiredService<PluginAdminSettingsService>();
         var heartbeat = app.Services.GetRequiredService<HeartbeatService>();
         var sessionAdminStore = (ISessionAdminStore)app.Services.GetRequiredService<IMemoryStore>();
         var operations = runtime.Operations;
@@ -947,6 +951,259 @@ internal static class AdminEndpoints
                 ? Results.Json(new MutationResponse { Success = true, Message = "Rate-limit policy deleted." }, CoreJsonContext.Default.MutationResponse)
                 : Results.NotFound(new MutationResponse { Success = false, Error = "Rate-limit policy not found." });
         });
+
+        // ── Channel Auth Events ──────────────────────────────────────
+        var authEventStore = runtime.ChannelAuthEvents;
+
+        app.MapGet("/admin/channels/auth", (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            return Results.Json(new ChannelAuthStatusResponse
+            {
+                Items = authEventStore.GetAll().Select(MapChannelAuthStatusItem).ToArray()
+            }, CoreJsonContext.Default.ChannelAuthStatusResponse);
+        });
+
+        app.MapGet("/admin/channels/{channelId}/auth", (HttpContext ctx, string channelId, string? accountId) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            var items = accountId is not null
+                ? authEventStore.GetLatest(channelId, accountId) is { } evt ? [MapChannelAuthStatusItem(evt)] : []
+                : authEventStore.GetAll(channelId).Select(MapChannelAuthStatusItem).ToArray();
+            if (items.Length == 0)
+                return Results.NotFound(new MutationResponse { Success = false, Error = "No auth event recorded for this channel." });
+
+            return Results.Json(new ChannelAuthStatusResponse
+            {
+                Items = items
+            }, CoreJsonContext.Default.ChannelAuthStatusResponse);
+        });
+
+        app.MapGet("/admin/channels/{channelId}/auth/stream", async (HttpContext ctx, string channelId, string? accountId) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+            {
+                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
+            ctx.Response.ContentType = "text/event-stream";
+            ctx.Response.Headers.CacheControl = "no-cache";
+            ctx.Response.Headers.Connection = "keep-alive";
+
+            using var subscription = authEventStore.Subscribe();
+            var ct = ctx.RequestAborted;
+
+            // Send current state as first event
+            var currentItems = accountId is not null
+                ? authEventStore.GetLatest(channelId, accountId) is { } currentEvt ? [currentEvt] : []
+                : authEventStore.GetAll(channelId);
+            foreach (var current in currentItems)
+            {
+                var json = JsonSerializer.Serialize(MapChannelAuthStatusItem(current), CoreJsonContext.Default.ChannelAuthStatusItem);
+                await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
+                await ctx.Response.Body.FlushAsync(ct);
+            }
+
+            // Stream subsequent events
+            await foreach (var evt in subscription.Reader.ReadAllAsync(ct))
+            {
+                if (!string.Equals(evt.ChannelId, channelId, StringComparison.Ordinal))
+                    continue;
+                if (accountId is not null && !string.Equals(evt.AccountId, accountId, StringComparison.Ordinal))
+                    continue;
+
+                var evtJson = JsonSerializer.Serialize(MapChannelAuthStatusItem(evt), CoreJsonContext.Default.ChannelAuthStatusItem);
+                await ctx.Response.WriteAsync($"data: {evtJson}\n\n", ct);
+                await ctx.Response.Body.FlushAsync(ct);
+            }
+        });
+
+        app.MapGet("/admin/channels/whatsapp/auth", (HttpContext ctx, string? accountId) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            var items = accountId is not null
+                ? authEventStore.GetLatest("whatsapp", accountId) is { } evt ? [MapChannelAuthStatusItem(evt)] : []
+                : authEventStore.GetAll("whatsapp").Select(MapChannelAuthStatusItem).ToArray();
+            if (items.Length == 0)
+                return Results.NotFound(new MutationResponse { Success = false, Error = "No WhatsApp auth event recorded." });
+
+            return Results.Json(new ChannelAuthStatusResponse
+            {
+                Items = items
+            }, CoreJsonContext.Default.ChannelAuthStatusResponse);
+        });
+
+        app.MapGet("/admin/channels/whatsapp/auth/stream", async (HttpContext ctx, string? accountId) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+            {
+                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
+            ctx.Response.ContentType = "text/event-stream";
+            ctx.Response.Headers.CacheControl = "no-cache";
+            ctx.Response.Headers.Connection = "keep-alive";
+
+            using var subscription = authEventStore.Subscribe();
+            var ct = ctx.RequestAborted;
+
+            var currentItems = accountId is not null
+                ? authEventStore.GetLatest("whatsapp", accountId) is { } currentEvt ? [currentEvt] : []
+                : authEventStore.GetAll("whatsapp");
+            foreach (var current in currentItems)
+            {
+                var json = JsonSerializer.Serialize(MapChannelAuthStatusItem(current), CoreJsonContext.Default.ChannelAuthStatusItem);
+                await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
+                await ctx.Response.Body.FlushAsync(ct);
+            }
+
+            await foreach (var evt in subscription.Reader.ReadAllAsync(ct))
+            {
+                if (!string.Equals(evt.ChannelId, "whatsapp", StringComparison.Ordinal))
+                    continue;
+                if (accountId is not null && !string.Equals(evt.AccountId, accountId, StringComparison.Ordinal))
+                    continue;
+
+                var evtJson = JsonSerializer.Serialize(MapChannelAuthStatusItem(evt), CoreJsonContext.Default.ChannelAuthStatusItem);
+                await ctx.Response.WriteAsync($"data: {evtJson}\n\n", ct);
+                await ctx.Response.Body.FlushAsync(ct);
+            }
+        });
+
+        app.MapGet("/admin/channels/whatsapp/auth/qr.svg", (HttpContext ctx, string? accountId) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            var evt = accountId is not null
+                ? authEventStore.GetLatest("whatsapp", accountId)
+                : authEventStore.GetAll("whatsapp").FirstOrDefault(static item =>
+                    string.Equals(item.State, "qr_code", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(item.Data));
+            if (evt is null || !string.Equals(evt.State, "qr_code", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(evt.Data))
+            {
+                return Results.NotFound(new MutationResponse
+                {
+                    Success = false,
+                    Error = "No active WhatsApp QR code is available."
+                });
+            }
+
+            using var generator = new QRCodeGenerator();
+            using var qrData = generator.CreateQrCode(evt.Data, QRCodeGenerator.ECCLevel.Q);
+            var svg = new SvgQRCode(qrData).GetGraphic(6);
+            return Results.Text(svg, "image/svg+xml", Encoding.UTF8);
+        });
+
+        app.MapGet("/admin/channels/whatsapp/setup", (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            var response = BuildWhatsAppSetupResponse(startup, runtime, adminSettings, pluginAdminSettings, message: "WhatsApp setup loaded.");
+            return Results.Json(response, CoreJsonContext.Default.WhatsAppSetupResponse);
+        });
+
+        app.MapPut("/admin/channels/whatsapp/setup", async (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
+
+            var requestPayload = await ReadJsonBodyAsync(ctx, CoreJsonContext.Default.WhatsAppSetupRequest);
+            if (requestPayload.Failure is not null)
+                return requestPayload.Failure;
+            var request = requestPayload.Value;
+            if (request is null)
+                return Results.BadRequest(new MutationResponse { Success = false, Error = "WhatsApp setup payload is required." });
+
+            var normalizedRequestResult = NormalizeWhatsAppSetupRequest(request);
+            if (normalizedRequestResult.Errors.Count > 0)
+            {
+                var invalidResponse = BuildWhatsAppSetupResponse(
+                    startup,
+                    runtime,
+                    adminSettings,
+                    pluginAdminSettings,
+                    message: "WhatsApp setup validation failed.",
+                    validationErrors: normalizedRequestResult.Errors);
+                return Results.Json(invalidResponse, CoreJsonContext.Default.WhatsAppSetupResponse, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var normalizedRequest = normalizedRequestResult.Request;
+            var builtInResult = adminSettings.UpdateWhatsAppSettings(normalizedRequest);
+            var validationErrors = ValidateWhatsAppPluginConfig(startup, runtime, normalizedRequest, out var pluginId, out var pluginConfig, out var pluginWarning);
+            var pluginChanged = false;
+            if (builtInResult.Success && validationErrors.Count == 0 && pluginId is not null)
+            {
+                pluginAdminSettings.Upsert(pluginId, pluginConfig, enabled: true);
+                pluginChanged = true;
+            }
+            var response = BuildWhatsAppSetupResponse(
+                startup,
+                runtime,
+                adminSettings,
+                pluginAdminSettings,
+                message: builtInResult.Success && validationErrors.Count == 0 ? "WhatsApp setup saved." : "WhatsApp setup validation failed.",
+                restartRequired: builtInResult.RestartRequired || pluginChanged,
+                validationErrors: [.. builtInResult.Errors, .. validationErrors],
+                pluginWarningOverride: pluginWarning);
+
+            if (builtInResult.Success && validationErrors.Count == 0)
+            {
+                RecordOperatorAudit(
+                    ctx,
+                    operations,
+                    auth,
+                    "whatsapp_setup_update",
+                    "whatsapp",
+                    "Updated WhatsApp setup.",
+                    success: true,
+                    before: null,
+                    after: normalizedRequest);
+                return Results.Json(response, CoreJsonContext.Default.WhatsAppSetupResponse);
+            }
+
+            return Results.Json(response, CoreJsonContext.Default.WhatsAppSetupResponse, statusCode: StatusCodes.Status400BadRequest);
+        });
+
+        app.MapPost("/admin/channels/whatsapp/restart", async (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.channels.auth");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
+
+            if (!runtime.ChannelAdapters.TryGetValue("whatsapp", out var adapter) || adapter is not IRestartableChannelAdapter restartable)
+            {
+                return Results.Json(
+                    new MutationResponse { Success = false, Error = "Runtime restart is only available for plugin-backed WhatsApp channels." },
+                    CoreJsonContext.Default.MutationResponse,
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
+            authEventStore.ClearChannel("whatsapp");
+            await restartable.RestartAsync(ctx.RequestAborted);
+            RecordOperatorAudit(ctx, operations, auth, "whatsapp_restart", "whatsapp", "Restarted WhatsApp channel.", success: true, before: null, after: null);
+
+            var response = BuildWhatsAppSetupResponse(startup, runtime, adminSettings, pluginAdminSettings, message: "WhatsApp channel restarted.");
+            return Results.Json(response, CoreJsonContext.Default.WhatsAppSetupResponse);
+        });
     }
 
     private static async Task<JsonBodyReadResult<T>> ReadJsonBodyAsync<T>(HttpContext ctx, JsonTypeInfo<T> typeInfo)
@@ -1092,6 +1349,307 @@ internal static class AdminEndpoints
             Success = success
         });
     }
+
+    private static ChannelAuthStatusItem MapChannelAuthStatusItem(BridgeChannelAuthEvent evt)
+        => new()
+        {
+            ChannelId = evt.ChannelId,
+            State = evt.State,
+            Data = evt.Data,
+            AccountId = evt.AccountId,
+            UpdatedAtUtc = evt.UpdatedAtUtc
+        };
+
+    private static WhatsAppSetupResponse BuildWhatsAppSetupResponse(
+        GatewayStartupContext startup,
+        GatewayAppRuntime runtime,
+        AdminSettingsService adminSettings,
+        PluginAdminSettingsService pluginAdminSettings,
+        string message = "",
+        bool restartRequired = false,
+        IReadOnlyList<string>? validationErrors = null,
+        string? pluginWarningOverride = null)
+    {
+        var snapshot = adminSettings.GetSnapshot();
+        var readiness = MapChannelReadiness(ChannelReadinessEvaluator.Evaluate(startup.Config, startup.IsNonLoopbackBind))
+            .FirstOrDefault(static item => string.Equals(item.ChannelId, "whatsapp", StringComparison.Ordinal));
+        var isFirstPartyWorker = string.Equals(snapshot.WhatsAppType, "first_party_worker", StringComparison.OrdinalIgnoreCase)
+            || runtime.WhatsAppWorkerHost is not null;
+        var pluginTarget = isFirstPartyWorker
+            ? new WhatsAppPluginTarget(null, null, null)
+            : ResolveWhatsAppPluginTarget(startup, runtime, pluginIdOverride: null);
+        var pluginId = pluginTarget.PluginId;
+        var pluginEntry = pluginId is null ? null : pluginAdminSettings.GetEntry(pluginId);
+        if (pluginEntry is null && pluginId is not null && startup.Config.Plugins.Entries.TryGetValue(pluginId, out var configuredPluginEntry))
+            pluginEntry = configuredPluginEntry;
+
+        var warnings = new List<string>();
+        if (!string.IsNullOrWhiteSpace(pluginWarningOverride))
+            warnings.Add(pluginWarningOverride);
+        else if (!string.IsNullOrWhiteSpace(pluginTarget.Warning))
+            warnings.Add(pluginTarget.Warning);
+        if (readiness is not null)
+            warnings.AddRange(readiness.Warnings);
+
+        var restartSupported = runtime.ChannelAdapters.TryGetValue("whatsapp", out var adapter)
+            && adapter is IRestartableChannelAdapter;
+
+        return new WhatsAppSetupResponse
+        {
+            ActiveBackend = DetermineActiveWhatsAppBackend(runtime, snapshot),
+            ConfiguredType = snapshot.WhatsAppType,
+            Message = message,
+            RestartRequired = restartRequired,
+            Enabled = snapshot.WhatsAppEnabled,
+            DmPolicy = snapshot.WhatsAppDmPolicy,
+            WebhookPath = snapshot.WhatsAppWebhookPath,
+            WebhookPublicBaseUrl = snapshot.WhatsAppWebhookPublicBaseUrl,
+            WebhookVerifyToken = snapshot.WhatsAppWebhookVerifyToken,
+            WebhookVerifyTokenRef = snapshot.WhatsAppWebhookVerifyTokenRef,
+            ValidateSignature = snapshot.WhatsAppValidateSignature,
+            WebhookAppSecret = snapshot.WhatsAppWebhookAppSecret,
+            WebhookAppSecretRef = snapshot.WhatsAppWebhookAppSecretRef,
+            CloudApiToken = snapshot.WhatsAppCloudApiToken,
+            CloudApiTokenRef = snapshot.WhatsAppCloudApiTokenRef,
+            PhoneNumberId = snapshot.WhatsAppPhoneNumberId,
+            BusinessAccountId = snapshot.WhatsAppBusinessAccountId,
+            BridgeUrl = snapshot.WhatsAppBridgeUrl,
+            BridgeToken = snapshot.WhatsAppBridgeToken,
+            BridgeTokenRef = snapshot.WhatsAppBridgeTokenRef,
+            BridgeSuppressSendExceptions = snapshot.WhatsAppBridgeSuppressSendExceptions,
+            FirstPartyWorker = snapshot.WhatsAppFirstPartyWorker,
+            FirstPartyWorkerConfigJson = PrettyJson(JsonSerializer.SerializeToElement(snapshot.WhatsAppFirstPartyWorker, CoreJsonContext.Default.WhatsAppFirstPartyWorkerConfig)),
+            FirstPartyWorkerConfigSchemaJson = GetWhatsAppFirstPartyWorkerConfigSchemaJson(),
+            PluginDetected = pluginId is not null,
+            PluginId = pluginId,
+            PluginConfigJson = pluginEntry?.Config is { } pluginConfig ? PrettyJson(pluginConfig) : null,
+            PluginConfigSchemaJson = pluginTarget.Plugin?.Manifest.ConfigSchema is { } pluginSchema ? PrettyJson(pluginSchema) : null,
+            PluginUiHintsJson = pluginTarget.Plugin?.Manifest.UiHints is { } uiHints ? PrettyJson(uiHints) : null,
+            PluginWarning = pluginWarningOverride ?? pluginTarget.Warning,
+            RestartSupported = restartSupported,
+            RestartHint = restartSupported
+                ? "Runtime restart is available for the active plugin-backed WhatsApp channel."
+                : "Built-in WhatsApp configuration changes require a gateway restart.",
+            DerivedWebhookUrl = BuildDerivedWebhookUrl(snapshot.WhatsAppWebhookPublicBaseUrl, snapshot.WhatsAppWebhookPath),
+            Readiness = readiness,
+            AuthStates = runtime.ChannelAuthEvents.GetAll("whatsapp").Select(MapChannelAuthStatusItem).ToArray(),
+            Warnings = warnings.Distinct(StringComparer.Ordinal).ToArray(),
+            ValidationErrors = validationErrors?.ToArray() ?? []
+        };
+    }
+
+    private static List<string> ValidateWhatsAppPluginConfig(
+        GatewayStartupContext startup,
+        GatewayAppRuntime runtime,
+        WhatsAppSetupRequest request,
+        out string? pluginId,
+        out JsonElement? pluginConfig,
+        out string? pluginWarning)
+    {
+        pluginId = null;
+        pluginConfig = null;
+        pluginWarning = null;
+
+        if (string.IsNullOrWhiteSpace(request.PluginConfigJson) && string.IsNullOrWhiteSpace(request.PluginId))
+            return [];
+
+        var pluginTarget = ResolveWhatsAppPluginTarget(startup, runtime, request.PluginId);
+        pluginWarning = pluginTarget.Warning;
+        pluginId = pluginTarget.PluginId;
+        if (pluginId is null)
+            return [pluginWarning ?? "No unique plugin-backed WhatsApp channel is available for bridge configuration."];
+
+        if (!string.IsNullOrWhiteSpace(request.PluginConfigJson))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(request.PluginConfigJson);
+                pluginConfig = document.RootElement.Clone();
+            }
+            catch (Exception ex)
+            {
+                return [$"Plugin config JSON is invalid: {ex.Message}"];
+            }
+        }
+
+        if (pluginTarget.Plugin?.Manifest is { } manifest)
+        {
+            var diagnostics = PluginConfigValidator.Validate(manifest, pluginConfig);
+            var errors = diagnostics
+                .Where(static diagnostic => !string.Equals(diagnostic.Severity, "warning", StringComparison.OrdinalIgnoreCase))
+                .Select(static diagnostic => diagnostic.Message)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (errors.Count > 0)
+                return errors;
+        }
+        return [];
+    }
+
+    private static string DetermineActiveWhatsAppBackend(GatewayAppRuntime runtime, AdminSettingsSnapshot snapshot)
+    {
+        if (runtime.ChannelAdapters.TryGetValue("whatsapp", out var adapter))
+        {
+            if (runtime.WhatsAppWorkerHost is not null && adapter is BridgedChannelAdapter)
+                return "first_party_worker";
+
+            return adapter switch
+            {
+                BridgedChannelAdapter => "plugin_bridge",
+                WhatsAppBridgeChannel => "built_in_bridge",
+                WhatsAppChannel => "official",
+                _ => snapshot.WhatsAppType
+            };
+        }
+
+        if (!snapshot.WhatsAppEnabled)
+            return "disabled";
+
+        if (string.Equals(snapshot.WhatsAppType, "first_party_worker", StringComparison.OrdinalIgnoreCase))
+            return "first_party_worker";
+
+        return string.Equals(snapshot.WhatsAppType, "bridge", StringComparison.OrdinalIgnoreCase)
+            ? "built_in_bridge"
+            : "official";
+    }
+
+    private static (WhatsAppSetupRequest Request, List<string> Errors) NormalizeWhatsAppSetupRequest(WhatsAppSetupRequest request)
+    {
+        var errors = new List<string>();
+        var workerConfig = request.FirstPartyWorker;
+        if (!string.IsNullOrWhiteSpace(request.FirstPartyWorkerConfigJson))
+        {
+            try
+            {
+                workerConfig = JsonSerializer.Deserialize(
+                    request.FirstPartyWorkerConfigJson,
+                    CoreJsonContext.Default.WhatsAppFirstPartyWorkerConfig);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"First-party worker config JSON is invalid: {ex.Message}");
+            }
+        }
+
+        return (new WhatsAppSetupRequest
+        {
+            Enabled = request.Enabled,
+            Type = request.Type,
+            DmPolicy = request.DmPolicy,
+            WebhookPath = request.WebhookPath,
+            WebhookPublicBaseUrl = request.WebhookPublicBaseUrl,
+            WebhookVerifyToken = request.WebhookVerifyToken,
+            WebhookVerifyTokenRef = request.WebhookVerifyTokenRef,
+            ValidateSignature = request.ValidateSignature,
+            WebhookAppSecret = request.WebhookAppSecret,
+            WebhookAppSecretRef = request.WebhookAppSecretRef,
+            CloudApiToken = request.CloudApiToken,
+            CloudApiTokenRef = request.CloudApiTokenRef,
+            PhoneNumberId = request.PhoneNumberId,
+            BusinessAccountId = request.BusinessAccountId,
+            BridgeUrl = request.BridgeUrl,
+            BridgeToken = request.BridgeToken,
+            BridgeTokenRef = request.BridgeTokenRef,
+            BridgeSuppressSendExceptions = request.BridgeSuppressSendExceptions,
+            PluginId = request.PluginId,
+            PluginConfigJson = request.PluginConfigJson,
+            FirstPartyWorker = workerConfig,
+            FirstPartyWorkerConfigJson = request.FirstPartyWorkerConfigJson
+        }, errors);
+    }
+
+    private static string? BuildDerivedWebhookUrl(string? publicBaseUrl, string webhookPath)
+    {
+        if (string.IsNullOrWhiteSpace(publicBaseUrl) || string.IsNullOrWhiteSpace(webhookPath))
+            return null;
+
+        try
+        {
+            var baseUri = new Uri(publicBaseUrl.TrimEnd('/') + "/", UriKind.Absolute);
+            return new Uri(baseUri, webhookPath.TrimStart('/')).ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string PrettyJson(JsonElement value)
+        => value.GetRawText();
+
+    private static string GetWhatsAppFirstPartyWorkerConfigSchemaJson()
+        => """
+           {
+             "type": "object",
+             "properties": {
+               "driver": { "type": "string", "enum": ["baileys_csharp", "simulated"] },
+               "executablePath": { "type": "string" },
+               "workingDirectory": { "type": "string" },
+               "storagePath": { "type": "string" },
+               "mediaCachePath": { "type": "string" },
+               "historySync": { "type": "boolean" },
+               "proxy": { "type": "string" },
+               "accounts": {
+                 "type": "array",
+                 "items": {
+                   "type": "object",
+                   "properties": {
+                     "accountId": { "type": "string" },
+                     "sessionPath": { "type": "string" },
+                     "deviceName": { "type": "string" },
+                     "pairingMode": { "type": "string", "enum": ["qr", "pairing_code"] },
+                     "phoneNumber": { "type": "string" },
+                     "sendReadReceipts": { "type": "boolean" },
+                     "ackReaction": { "type": "boolean" },
+                     "mediaCachePath": { "type": "string" },
+                     "historySync": { "type": "boolean" },
+                     "proxy": { "type": "string" }
+                   },
+                   "required": ["accountId", "sessionPath", "pairingMode"]
+                 }
+               }
+             },
+             "required": ["driver", "accounts"]
+           }
+           """;
+
+    private static WhatsAppPluginTarget ResolveWhatsAppPluginTarget(
+        GatewayStartupContext startup,
+        GatewayAppRuntime runtime,
+        string? pluginIdOverride)
+    {
+        if (runtime.PluginHost is null)
+            return new(null, pluginIdOverride is null ? null : $"Plugin '{pluginIdOverride}' is not loaded.", null);
+
+        var registrations = runtime.PluginHost.ChannelRegistrations
+            .Where(registration => string.Equals(registration.ChannelId, "whatsapp", StringComparison.Ordinal))
+            .ToArray();
+
+        if (!string.IsNullOrWhiteSpace(pluginIdOverride))
+            registrations = registrations
+                .Where(registration => string.Equals(registration.PluginId, pluginIdOverride, StringComparison.Ordinal))
+                .ToArray();
+
+        if (registrations.Length == 0)
+        {
+            return new(
+                null,
+                pluginIdOverride is null
+                    ? null
+                    : $"Plugin '{pluginIdOverride}' is not currently loaded for channel 'whatsapp'.",
+                null);
+        }
+
+        if (registrations.Length > 1)
+            return new(null, "Multiple plugins register channel 'whatsapp'. Configure a specific plugin id.", null);
+
+        var pluginId = registrations[0].PluginId;
+        var discovered = PluginDiscovery.DiscoverWithDiagnostics(startup.Config.Plugins, startup.WorkspacePath).Plugins
+            .FirstOrDefault(plugin => string.Equals(plugin.Manifest.Id, pluginId, StringComparison.Ordinal));
+        return new(pluginId, null, discovered);
+    }
+
+    private sealed record WhatsAppPluginTarget(string? PluginId, string? Warning, DiscoveredPlugin? Plugin);
 
     private static string? SerializeAuditValue(object? value)
     {

@@ -9,6 +9,8 @@ internal sealed class TestWebSocket : WebSocket
     private readonly ConcurrentQueue<byte[]> _sent = new();
     private readonly ConcurrentQueue<Exception> _receiveExceptions = new();
     private bool _blockReceiveUntilCancelled;
+    private TaskCompletionSource<bool>? _sendStarted;
+    private TaskCompletionSource<bool>? _sendRelease;
 
     private WebSocketState _state = WebSocketState.Open;
 
@@ -28,6 +30,18 @@ internal sealed class TestWebSocket : WebSocket
 
     public void BlockReceiveUntilCancelled()
         => _blockReceiveUntilCancelled = true;
+
+    public void BlockSendUntilReleased()
+    {
+        _sendStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _sendRelease = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    public Task WaitForSendToStartAsync()
+        => _sendStarted?.Task ?? Task.CompletedTask;
+
+    public void ReleaseBlockedSend()
+        => _sendRelease?.TrySetResult(true);
 
     public override WebSocketCloseStatus? CloseStatus { get; }
     public override string? CloseStatusDescription { get; }
@@ -77,8 +91,27 @@ internal sealed class TestWebSocket : WebSocket
 
     public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
+        if (_sendRelease is not null)
+        {
+            _sendStarted?.TrySetResult(true);
+            return WaitAndSendAsync(buffer, cancellationToken);
+        }
+
+        if (_state != WebSocketState.Open)
+            throw new ObjectDisposedException(nameof(TestWebSocket));
+
         var copy = buffer.ToArray();
         _sent.Enqueue(copy);
         return Task.CompletedTask;
+    }
+
+    private async Task WaitAndSendAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
+    {
+        await _sendRelease!.Task.WaitAsync(cancellationToken);
+        if (_state != WebSocketState.Open)
+            throw new ObjectDisposedException(nameof(TestWebSocket));
+
+        var copy = buffer.ToArray();
+        _sent.Enqueue(copy);
     }
 }

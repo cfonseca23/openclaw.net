@@ -26,6 +26,10 @@ public sealed class WebSocketChannel : IChannelAdapter
         public string IpKey { get; init; } = "unknown";
         public bool UseJsonEnvelope { get; set; }
         public SemaphoreSlim SendLock { get; } = new(1, 1);
+        public object LifecycleGate { get; } = new();
+        public bool Removed { get; set; }
+        public bool SendLockDisposed { get; set; }
+        public int SendReservations { get; set; }
         public RateWindow Rate { get; }
 
         public ConnectionState(int messagesPerMinute)
@@ -145,28 +149,7 @@ public sealed class WebSocketChannel : IChannelAdapter
                 CoreJsonContext.Default.WsServerEnvelope)
             : Encoding.UTF8.GetBytes(message.Text);
 
-        await state.SendLock.WaitAsync(ct);
-        try
-        {
-            if (state.Socket.State == WebSocketState.Open)
-                await state.Socket.SendAsync(payload.AsMemory(), WebSocketMessageType.Text, endOfMessage: true, cancellationToken: ct);
-        }
-        catch (ObjectDisposedException)
-        {
-            // Client disconnected mid-send.
-        }
-        catch (WebSocketException)
-        {
-            // Client disconnected mid-send.
-        }
-        catch (InvalidOperationException)
-        {
-            // Socket is no longer usable.
-        }
-        finally
-        {
-            state.SendLock.Release();
-        }
+        await SendPayloadAsync(message.RecipientId, state, payload, ct);
     }
 
     public async ValueTask SendEnvelopeAsync(string recipientId, WsServerEnvelope envelope, CancellationToken ct)
@@ -179,23 +162,37 @@ public sealed class WebSocketChannel : IChannelAdapter
 
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, CoreJsonContext.Default.WsServerEnvelope);
 
-        await SendPayloadAsync(state, payload, ct);
+        await SendPayloadAsync(recipientId, state, payload, ct);
     }
 
     private async ValueTask SendEnvelopeToStateAsync(ConnectionState state, WsServerEnvelope envelope, CancellationToken ct)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, CoreJsonContext.Default.WsServerEnvelope);
 
-        await SendPayloadAsync(state, payload, ct);
+        await SendPayloadAsync(recipientId: null, state, payload, ct);
     }
 
-    private static async ValueTask SendPayloadAsync(ConnectionState state, byte[] payload, CancellationToken ct)
+    private async ValueTask SendPayloadAsync(string? recipientId, ConnectionState state, byte[] payload, CancellationToken ct)
     {
-        await state.SendLock.WaitAsync(ct);
+        if (!TryReserveSend(state))
+            return;
+
+        var acquired = false;
         try
         {
-            if (state.Socket.State == WebSocketState.Open)
-                await state.Socket.SendAsync(payload.AsMemory(), WebSocketMessageType.Text, endOfMessage: true, cancellationToken: ct);
+            await state.SendLock.WaitAsync(ct);
+            acquired = true;
+
+            if (recipientId is not null &&
+                (!_connections.TryGetValue(recipientId, out var current) || !ReferenceEquals(current, state)))
+            {
+                return;
+            }
+
+            if (state.Removed || state.Socket.State != WebSocketState.Open)
+                return;
+
+            await state.Socket.SendAsync(payload.AsMemory(), WebSocketMessageType.Text, endOfMessage: true, cancellationToken: ct);
         }
         catch (ObjectDisposedException)
         {
@@ -211,7 +208,9 @@ public sealed class WebSocketChannel : IChannelAdapter
         }
         finally
         {
-            state.SendLock.Release();
+            if (acquired)
+                state.SendLock.Release();
+            CompleteSendReservation(state);
         }
     }
 
@@ -244,28 +243,7 @@ public sealed class WebSocketChannel : IChannelAdapter
             },
             CoreJsonContext.Default.WsServerEnvelope);
 
-        await state.SendLock.WaitAsync(ct);
-        try
-        {
-            if (state.Socket.State == WebSocketState.Open)
-                await state.Socket.SendAsync(payload.AsMemory(), WebSocketMessageType.Text, endOfMessage: true, cancellationToken: ct);
-        }
-        catch (ObjectDisposedException)
-        {
-            // Client disconnected mid-send.
-        }
-        catch (WebSocketException)
-        {
-            // Client disconnected mid-send.
-        }
-        catch (InvalidOperationException)
-        {
-            // Socket is no longer usable.
-        }
-        finally
-        {
-            state.SendLock.Release();
-        }
+        await SendPayloadAsync(recipientId, state, payload, ct);
     }
 
     public async ValueTask DisposeAsync()
@@ -281,14 +259,7 @@ public sealed class WebSocketChannel : IChannelAdapter
                 // ignore
             }
 
-            try
-            {
-                kvp.Value.SendLock.Dispose();
-            }
-            catch
-            {
-                // ignore
-            }
+            RemoveConnection(kvp.Key, kvp.Value);
         }
 
         _connections.Clear();
@@ -303,6 +274,12 @@ public sealed class WebSocketChannel : IChannelAdapter
 
         state.UseJsonEnvelope = useJsonEnvelope;
         return true;
+    }
+
+    internal void RemoveConnectionForTest(string clientId)
+    {
+        if (_connections.TryGetValue(clientId, out var state))
+            RemoveConnection(clientId, state);
     }
 
     private bool TryAddConnection(string clientId, WebSocket ws, IPAddress? remoteIp, out ConnectionState state)
@@ -345,11 +322,65 @@ public sealed class WebSocketChannel : IChannelAdapter
 
     private void RemoveConnection(string clientId, ConnectionState state)
     {
-        if (_connections.TryRemove(clientId, out _))
-            Interlocked.Decrement(ref _connectionCount);
+        if (!_connections.TryRemove(clientId, out _))
+            return;
+
+        Interlocked.Decrement(ref _connectionCount);
         _connectionsPerIp.AddOrUpdate(state.IpKey, 0, (_, c) => Math.Max(0, c - 1));
         try { state.Socket.Dispose(); } catch { /* ignore */ }
-        try { state.SendLock.Dispose(); } catch { /* ignore */ }
+        DisposeSendLockIfSafe(state, removed: true);
+    }
+
+    private static bool TryReserveSend(ConnectionState state)
+    {
+        lock (state.LifecycleGate)
+        {
+            if (state.Removed)
+                return false;
+
+            state.SendReservations++;
+            return true;
+        }
+    }
+
+    private static void CompleteSendReservation(ConnectionState state)
+    {
+        SemaphoreSlim? sendLockToDispose = null;
+        lock (state.LifecycleGate)
+        {
+            state.SendReservations--;
+            if (state.Removed && !state.SendLockDisposed && state.SendReservations == 0)
+            {
+                state.SendLockDisposed = true;
+                sendLockToDispose = state.SendLock;
+            }
+        }
+
+        if (sendLockToDispose is not null)
+        {
+            try { sendLockToDispose.Dispose(); } catch { /* ignore */ }
+        }
+    }
+
+    private static void DisposeSendLockIfSafe(ConnectionState state, bool removed)
+    {
+        SemaphoreSlim? sendLockToDispose = null;
+        lock (state.LifecycleGate)
+        {
+            if (removed)
+                state.Removed = true;
+
+            if (!state.SendLockDisposed && state.SendReservations == 0)
+            {
+                state.SendLockDisposed = true;
+                sendLockToDispose = state.SendLock;
+            }
+        }
+
+        if (sendLockToDispose is not null)
+        {
+            try { sendLockToDispose.Dispose(); } catch { /* ignore */ }
+        }
     }
 
     private async Task<string?> ReceiveFullTextMessageAsync(WebSocket ws, CancellationToken ct)

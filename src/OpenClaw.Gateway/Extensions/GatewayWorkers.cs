@@ -11,6 +11,7 @@ using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Middleware;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Pipeline;
+using OpenClaw.Agent.Plugins;
 using OpenClaw.Core.Security;
 using OpenClaw.Core.Sessions;
 using OpenClaw.Gateway;
@@ -42,7 +43,7 @@ internal static class GatewayWorkers
         RuntimeOperationsState operations)
     {
         StartSessionCleanup(lifetime, logger, sessionManager, sessionLocks, lockLastUsed);
-        StartInboundWorkers(lifetime, logger, workerCount, isNonLoopbackBind, sessionManager, sessionLocks, lockLastUsed, pipeline, middlewarePipeline, wsChannel, agentRuntime, config, cronScheduler, heartbeatService, toolApprovalService, approvalAuditStore, pairingManager, commandProcessor, operations);
+        StartInboundWorkers(lifetime, logger, workerCount, isNonLoopbackBind, sessionManager, sessionLocks, lockLastUsed, pipeline, middlewarePipeline, wsChannel, agentRuntime, channelAdapters, config, cronScheduler, heartbeatService, toolApprovalService, approvalAuditStore, pairingManager, commandProcessor, operations);
         StartOutboundWorkers(lifetime, logger, workerCount, pipeline, channelAdapters, heartbeatService);
     }
 
@@ -129,6 +130,7 @@ internal static class GatewayWorkers
         MiddlewarePipeline middlewarePipeline,
         WebSocketChannel wsChannel,
         IAgentRuntime agentRuntime,
+        IReadOnlyDictionary<string, IChannelAdapter> channelAdapters,
         GatewayConfig config,
         CronScheduler? cronScheduler,
         HeartbeatService heartbeatService,
@@ -148,9 +150,12 @@ internal static class GatewayWorkers
                     {
                         Session? session = null;
                         SemaphoreSlim? lockObj = null;
+                        IBridgedChannelControl? bridgedAdapter = null;
                         var lockAcquired = false;
+                        var bridgedTypingStarted = false;
                         long initialInputTokens = 0;
                         long initialOutputTokens = 0;
+                        var conversationRecipientId = ResolveConversationRecipientId(msg);
                         try
                         {
                             if (!msg.IsSystem)
@@ -160,20 +165,20 @@ internal static class GatewayWorkers
                                     await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                     {
                                         ChannelId = msg.ChannelId,
-                                        RecipientId = msg.SenderId,
+                                        RecipientId = conversationRecipientId,
                                         Text = "Rate limit exceeded. Please slow down.",
                                         ReplyToMessageId = msg.MessageId
                                     }, lifetime.ApplicationStopping);
                                     continue;
                                 }
 
-                                var effectiveSessionKey = msg.SessionId ?? $"{msg.ChannelId}:{msg.SenderId}";
+                                var effectiveSessionKey = msg.SessionId ?? $"{msg.ChannelId}:{conversationRecipientId}";
                                 if (!operations.ActorRateLimits.TryConsume("session", effectiveSessionKey, "inbound_chat", out _))
                                 {
                                     await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                     {
                                         ChannelId = msg.ChannelId,
-                                        RecipientId = msg.SenderId,
+                                        RecipientId = conversationRecipientId,
                                         Text = "Session rate limit exceeded. Please retry shortly.",
                                         ReplyToMessageId = msg.MessageId
                                     }, lifetime.ApplicationStopping);
@@ -230,7 +235,7 @@ internal static class GatewayWorkers
                                 await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                 {
                                     ChannelId = msg.ChannelId,
-                                    RecipientId = msg.SenderId,
+                                    RecipientId = conversationRecipientId,
                                     Text = ack,
                                     ReplyToMessageId = msg.MessageId
                                 }, lifetime.ApplicationStopping);
@@ -301,7 +306,7 @@ internal static class GatewayWorkers
                                         await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                         {
                                             ChannelId = msg.ChannelId,
-                                            RecipientId = msg.SenderId,
+                                            RecipientId = conversationRecipientId,
                                             Text = ack,
                                             ReplyToMessageId = msg.MessageId
                                         }, lifetime.ApplicationStopping);
@@ -328,7 +333,7 @@ internal static class GatewayWorkers
                                 await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                 {
                                     ChannelId = msg.ChannelId,
-                                    RecipientId = msg.SenderId,
+                                    RecipientId = conversationRecipientId,
                                     Text = pairingMsg,
                                     ReplyToMessageId = msg.MessageId
                                 }, lifetime.ApplicationStopping);
@@ -337,8 +342,8 @@ internal static class GatewayWorkers
                             }
 
                             session = msg.SessionId is not null
-                                ? await sessionManager.GetOrCreateByIdAsync(msg.SessionId, msg.ChannelId, msg.SenderId, lifetime.ApplicationStopping)
-                                : await sessionManager.GetOrCreateAsync(msg.ChannelId, msg.SenderId, lifetime.ApplicationStopping);
+                                ? await sessionManager.GetOrCreateByIdAsync(msg.SessionId, msg.ChannelId, conversationRecipientId, lifetime.ApplicationStopping)
+                                : await sessionManager.GetOrCreateAsync(msg.ChannelId, conversationRecipientId, lifetime.ApplicationStopping);
                             if (session is null)
                                 throw new InvalidOperationException("Session manager returned null session.");
 
@@ -358,7 +363,7 @@ internal static class GatewayWorkers
                                     await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                     {
                                         ChannelId = msg.ChannelId,
-                                        RecipientId = msg.SenderId,
+                                        RecipientId = conversationRecipientId,
                                         Text = cmdResponse,
                                         Subject = msg.Subject,
                                         ReplyToMessageId = msg.MessageId
@@ -392,7 +397,7 @@ internal static class GatewayWorkers
                                     await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                     {
                                         ChannelId = msg.ChannelId,
-                                        RecipientId = msg.SenderId,
+                                        RecipientId = conversationRecipientId,
                                         Text = shortCircuitText,
                                         Subject = msg.Subject,
                                         ReplyToMessageId = msg.MessageId
@@ -474,7 +479,7 @@ internal static class GatewayWorkers
                                     await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                     {
                                         ChannelId = msg.ChannelId,
-                                        RecipientId = msg.SenderId,
+                                        RecipientId = conversationRecipientId,
                                         Text = prompt,
                                         ReplyToMessageId = msg.MessageId
                                     }, ct);
@@ -511,6 +516,24 @@ internal static class GatewayWorkers
                             }
                             else
                             {
+                                // Send read receipt and typing indicator for bridged channels
+                                bridgedAdapter = channelAdapters.TryGetValue(msg.ChannelId, out var adapter)
+                                    ? adapter as IBridgedChannelControl : null;
+                                var isSelfChat = bridgedAdapter?.SelfIds.Any(selfId =>
+                                    string.Equals(selfId, msg.SenderId, StringComparison.Ordinal)) == true;
+
+                                if (bridgedAdapter is not null && !isSelfChat)
+                                {
+                                    if (msg.MessageId is not null)
+                                    {
+                                        var receiptJid = msg.IsGroup ? msg.GroupId : msg.SenderId;
+                                        var receiptParticipant = msg.IsGroup ? msg.SenderId : null;
+                                        _ = bridgedAdapter.SendReadReceiptAsync(msg.MessageId, receiptJid, receiptParticipant, lifetime.ApplicationStopping);
+                                    }
+                                    _ = bridgedAdapter.SendTypingAsync(conversationRecipientId, true, lifetime.ApplicationStopping);
+                                    bridgedTypingStarted = true;
+                                }
+
                                 var responseText = await agentRuntime.RunAsync(session, messageText, lifetime.ApplicationStopping, approvalCallback: ApprovalCallback);
                                 await sessionManager.PersistAsync(session, lifetime.ApplicationStopping);
 
@@ -529,7 +552,7 @@ internal static class GatewayWorkers
                                     await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                     {
                                         ChannelId = msg.ChannelId,
-                                        RecipientId = msg.SenderId,
+                                        RecipientId = conversationRecipientId,
                                         Text = responseText,
                                         SessionId = session.Id,
                                         CronJobName = msg.CronJobName,
@@ -583,7 +606,7 @@ internal static class GatewayWorkers
                                     await pipeline.OutboundWriter.WriteAsync(new OutboundMessage
                                     {
                                         ChannelId = msg.ChannelId,
-                                        RecipientId = msg.SenderId,
+                                        RecipientId = conversationRecipientId,
                                         Text = errorText,
                                         Subject = msg.Subject,
                                         ReplyToMessageId = msg.MessageId
@@ -594,6 +617,9 @@ internal static class GatewayWorkers
                         }
                         finally
                         {
+                            if (bridgedAdapter is not null && bridgedTypingStarted)
+                                _ = bridgedAdapter.SendTypingAsync(conversationRecipientId, false, lifetime.ApplicationStopping);
+
                             cronScheduler?.MarkJobCompleted(msg.CronJobName);
 
                             if (lockAcquired && lockObj is not null)
@@ -664,6 +690,11 @@ internal static class GatewayWorkers
             }, lifetime.ApplicationStopping);
         }
     }
+
+    private static string ResolveConversationRecipientId(InboundMessage msg)
+        => msg.IsGroup && !string.IsNullOrWhiteSpace(msg.GroupId)
+            ? msg.GroupId!
+            : msg.SenderId;
 
     private static void RecordApprovalDecisionEvent(
         RuntimeOperationsState operations,

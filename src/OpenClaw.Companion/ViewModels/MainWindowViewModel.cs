@@ -3,6 +3,7 @@ using System.Text.Json;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using OpenClaw.Client;
 using OpenClaw.Companion.Models;
 using OpenClaw.Companion.Services;
 
@@ -15,6 +16,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private bool _isLoadingSettings;
     private int? _activeAssistantMessageIndex;
     private string? _activeAssistantReplyToMessageId;
+    private string? _lastSettingsWarning;
 
     [ObservableProperty]
     private string _serverUrl = "ws://127.0.0.1:18789/ws";
@@ -24,6 +26,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private bool _rememberToken;
+
+    [ObservableProperty]
+    private bool _allowPlaintextTokenFallback;
 
     [ObservableProperty]
     private bool _debugMode;
@@ -43,14 +48,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
     public MainWindowViewModel()
-        : this(new SettingsStore(), new GatewayWebSocketClient())
+        : this(new SettingsStore(), new GatewayWebSocketClient(), null)
     {
     }
 
-    public MainWindowViewModel(SettingsStore settingsStore, GatewayWebSocketClient client)
+    public MainWindowViewModel(
+        SettingsStore settingsStore,
+        GatewayWebSocketClient client,
+        Func<string, string?, OpenClawHttpClient>? adminClientFactory = null)
     {
         _settingsStore = settingsStore;
         _client = client;
+        _adminClientFactory = adminClientFactory ?? ((baseUrl, authToken) => new OpenClawHttpClient(baseUrl, authToken));
 
         _client.OnTextMessage += HandleInboundText;
         _client.OnError += err => AddSystemMessage($"Error: {err}");
@@ -66,6 +75,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             ServerUrl = settings.ServerUrl;
             RememberToken = settings.RememberToken;
+            AllowPlaintextTokenFallback = settings.AllowPlaintextTokenFallback;
             AuthToken = settings.AuthToken ?? "";
             DebugMode = settings.DebugMode;
         }
@@ -73,6 +83,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             _isLoadingSettings = false;
         }
+
+        ShowSettingsWarningIfNeeded();
     }
 
     private void SaveSettings()
@@ -81,9 +93,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             ServerUrl = ServerUrl,
             RememberToken = RememberToken,
+            AllowPlaintextTokenFallback = AllowPlaintextTokenFallback,
             DebugMode = DebugMode,
             AuthToken = string.IsNullOrWhiteSpace(AuthToken) ? null : AuthToken
         });
+        ShowSettingsWarningIfNeeded();
     }
 
     private void HandleInboundText(string payload)
@@ -272,6 +286,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Messages.Add(new ChatMessage { Role = ChatRole.System, Text = text });
     }
 
+    private void ShowSettingsWarningIfNeeded()
+    {
+        var warning = _settingsStore.LastWarning;
+        if (string.IsNullOrWhiteSpace(warning) || string.Equals(_lastSettingsWarning, warning, StringComparison.Ordinal))
+            return;
+
+        _lastSettingsWarning = warning;
+        AddSystemMessageCore(warning);
+    }
+
     partial void OnDebugModeChanged(bool value)
     {
         if (_isLoadingSettings)
@@ -304,6 +328,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await _client.ConnectAsync(uri, string.IsNullOrWhiteSpace(AuthToken) ? null : AuthToken, CancellationToken.None);
             IsConnected = true;
             Status = "Connected";
+            await LoadWhatsAppSetupAsync();
         }
         catch (Exception ex)
         {
@@ -334,6 +359,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         }
         finally
         {
+            CancelWhatsAppAuthStream();
             IsConnected = false;
             Status = "Disconnected";
             IsBusy = false;

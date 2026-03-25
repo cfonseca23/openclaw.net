@@ -45,6 +45,38 @@ public sealed class AdminSettingsSnapshot
     public bool WhatsAppValidateSignature { get; init; }
     [JsonPropertyName("whatsappDmPolicy")]
     public string WhatsAppDmPolicy { get; init; } = "pairing";
+    [JsonPropertyName("whatsappType")]
+    public string WhatsAppType { get; init; } = "official";
+    [JsonPropertyName("whatsappWebhookPath")]
+    public string WhatsAppWebhookPath { get; init; } = "/whatsapp/inbound";
+    [JsonPropertyName("whatsappWebhookPublicBaseUrl")]
+    public string? WhatsAppWebhookPublicBaseUrl { get; init; }
+    [JsonPropertyName("whatsappWebhookVerifyToken")]
+    public string WhatsAppWebhookVerifyToken { get; init; } = "openclaw-verify";
+    [JsonPropertyName("whatsappWebhookVerifyTokenRef")]
+    public string WhatsAppWebhookVerifyTokenRef { get; init; } = "env:WHATSAPP_VERIFY_TOKEN";
+    [JsonPropertyName("whatsappWebhookAppSecret")]
+    public string? WhatsAppWebhookAppSecret { get; init; }
+    [JsonPropertyName("whatsappWebhookAppSecretRef")]
+    public string WhatsAppWebhookAppSecretRef { get; init; } = "env:WHATSAPP_APP_SECRET";
+    [JsonPropertyName("whatsappCloudApiToken")]
+    public string? WhatsAppCloudApiToken { get; init; }
+    [JsonPropertyName("whatsappCloudApiTokenRef")]
+    public string WhatsAppCloudApiTokenRef { get; init; } = "env:WHATSAPP_CLOUD_API_TOKEN";
+    [JsonPropertyName("whatsappPhoneNumberId")]
+    public string? WhatsAppPhoneNumberId { get; init; }
+    [JsonPropertyName("whatsappBusinessAccountId")]
+    public string? WhatsAppBusinessAccountId { get; init; }
+    [JsonPropertyName("whatsappBridgeUrl")]
+    public string? WhatsAppBridgeUrl { get; init; }
+    [JsonPropertyName("whatsappBridgeToken")]
+    public string? WhatsAppBridgeToken { get; init; }
+    [JsonPropertyName("whatsappBridgeTokenRef")]
+    public string WhatsAppBridgeTokenRef { get; init; } = "env:WHATSAPP_BRIDGE_TOKEN";
+    [JsonPropertyName("whatsappBridgeSuppressSendExceptions")]
+    public bool WhatsAppBridgeSuppressSendExceptions { get; init; }
+    [JsonPropertyName("whatsappFirstPartyWorker")]
+    public WhatsAppFirstPartyWorkerConfig WhatsAppFirstPartyWorker { get; init; } = new();
 }
 
 public sealed class AdminSettingsPersistenceInfo

@@ -16,23 +16,25 @@
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <Grid RowDefinitions="Auto,*,Auto" Margin="12" RowSpacing="12">
+    <Grid RowDefinitions="Auto,*" Margin="12" RowSpacing="12">
         <Border Grid.Row="0" Padding="10" CornerRadius="8" BorderThickness="1"
                 BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
-            <Grid ColumnDefinitions="2*,*,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowDefinitions="Auto,Auto" RowSpacing="8">
+            <Grid ColumnDefinitions="2*,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowDefinitions="Auto,Auto" RowSpacing="8">
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Gateway" FontWeight="SemiBold" />
                 <TextBlock Grid.Row="0" Grid.Column="1" Text="Auth Token" FontWeight="SemiBold" />
                 <TextBlock Grid.Row="0" Grid.Column="2" Text="Remember" FontWeight="SemiBold" />
-                <TextBlock Grid.Row="0" Grid.Column="3" Text="Debug" FontWeight="SemiBold" />
-                <TextBlock Grid.Row="0" Grid.Column="4" Text="Status" FontWeight="SemiBold" />
+                <TextBlock Grid.Row="0" Grid.Column="3" Text="Plaintext" FontWeight="SemiBold" />
+                <TextBlock Grid.Row="0" Grid.Column="4" Text="Debug" FontWeight="SemiBold" />
+                <TextBlock Grid.Row="0" Grid.Column="5" Text="Status" FontWeight="SemiBold" />
 
                 <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding ServerUrl}" Watermark="ws://127.0.0.1:18789/ws" />
                 <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding AuthToken}" PasswordChar="•" Watermark="Bearer token (optional on localhost)" />
                 <CheckBox Grid.Row="1" Grid.Column="2" IsChecked="{Binding RememberToken}" />
-                <CheckBox Grid.Row="1" Grid.Column="3" IsChecked="{Binding DebugMode}" />
-                <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding Status}" VerticalAlignment="Center" />
+                <CheckBox Grid.Row="1" Grid.Column="3" IsChecked="{Binding AllowPlaintextTokenFallback}" />
+                <CheckBox Grid.Row="1" Grid.Column="4" IsChecked="{Binding DebugMode}" />
+                <TextBlock Grid.Row="1" Grid.Column="5" Text="{Binding Status}" VerticalAlignment="Center" />
 
-                <StackPanel Grid.Row="1" Grid.Column="5" Orientation="Horizontal" Spacing="8">
+                <StackPanel Grid.Row="1" Grid.Column="6" Orientation="Horizontal" Spacing="8">
                     <Button Content="Connect" Command="{Binding ConnectCommand}"
                             IsVisible="{Binding IsConnected, Converter={StaticResource InverseBool}}"
                             IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBool}}" />
@@ -43,26 +45,141 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="1" Padding="10" CornerRadius="8" BorderThickness="1"
-                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
-            <ListBox ItemsSource="{Binding Messages}" Background="Transparent" BorderThickness="0">
-                <ListBox.ItemTemplate>
-                    <DataTemplate DataType="models:ChatMessage">
-                        <StackPanel Margin="0,0,0,10" Spacing="4">
-                            <TextBlock Text="{Binding RoleLabel}" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
-                        </StackPanel>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
-        </Border>
+        <TabControl Grid.Row="1">
+            <TabItem Header="Chat">
+                <Grid RowDefinitions="*,Auto" RowSpacing="12">
+                    <Border Grid.Row="0" Padding="10" CornerRadius="8" BorderThickness="1"
+                            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                        <ListBox ItemsSource="{Binding Messages}" Background="Transparent" BorderThickness="0">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="models:ChatMessage">
+                                    <StackPanel Margin="0,0,0,10" Spacing="4">
+                                        <TextBlock Text="{Binding RoleLabel}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
 
-        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="10">
-            <TextBox Text="{Binding InputText}" AcceptsReturn="True" TextWrapping="Wrap"
-                     MinHeight="42" Watermark="Type a message…" />
-            <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}"
-                    IsEnabled="{Binding IsConnected}" MinWidth="90" />
-        </Grid>
+                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                        <TextBox Text="{Binding InputText}" AcceptsReturn="True" TextWrapping="Wrap"
+                                 MinHeight="42" Watermark="Type a message…" />
+                        <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}"
+                                IsEnabled="{Binding IsConnected}" MinWidth="90" />
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="WhatsApp">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="12" Margin="0,4,0,0">
+                        <Border Padding="10" CornerRadius="8" BorderThickness="1"
+                                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                            <StackPanel Spacing="8">
+                                <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                                    <TextBlock Text="{Binding WhatsAppMessage}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                    <Button Grid.Column="1" Content="Reload" Command="{Binding LoadWhatsAppSetupCommand}"
+                                            IsEnabled="{Binding IsWhatsAppBusy, Converter={StaticResource InverseBool}}" />
+                                    <Button Grid.Column="2" Content="Save" Command="{Binding SaveWhatsAppSetupCommand}"
+                                            IsEnabled="{Binding IsWhatsAppBusy, Converter={StaticResource InverseBool}}" />
+                                    <Button Grid.Column="3" Content="Restart" Command="{Binding RestartWhatsAppCommand}"
+                                            IsEnabled="{Binding IsConnected}" />
+                                </Grid>
+                                <TextBlock Text="{Binding WhatsAppActiveBackend, StringFormat=Active backend: {0}}" />
+                                <TextBlock Text="{Binding WhatsAppDerivedWebhookUrl, StringFormat=Derived webhook URL: {0}}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding WhatsAppRestartHint}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Padding="10" CornerRadius="8" BorderThickness="1"
+                                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="Mode" FontWeight="SemiBold" />
+                                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12">
+                                    <CheckBox Content="Enabled" IsChecked="{Binding WhatsAppEnabled}" />
+                                    <TextBlock Grid.Column="1" Text="Type" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Column="2" ItemsSource="{Binding WhatsAppTypeOptions}" SelectedItem="{Binding WhatsAppType}" MinWidth="140" />
+                                    <TextBlock Grid.Column="3" Text="DM policy" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Column="4" ItemsSource="{Binding WhatsAppDmPolicyOptions}" SelectedItem="{Binding WhatsAppDmPolicy}" MinWidth="140" />
+                                </Grid>
+
+                                <TextBlock Text="Official / built-in settings" FontWeight="SemiBold" />
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="10" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+                                    <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding WhatsAppWebhookPath}" Watermark="/whatsapp/inbound" />
+                                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding WhatsAppWebhookPublicBaseUrl}" Watermark="https://example.com" />
+                                    <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding WhatsAppWebhookVerifyToken}" Watermark="Verify token" />
+                                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding WhatsAppWebhookVerifyTokenRef}" Watermark="env:WHATSAPP_VERIFY_TOKEN" />
+                                    <CheckBox Grid.Row="2" Grid.Column="0" Content="Validate signature" IsChecked="{Binding WhatsAppValidateSignature}" />
+                                    <TextBox Grid.Row="3" Grid.Column="0" Text="{Binding WhatsAppWebhookAppSecret}" PasswordChar="•" Watermark="App secret" />
+                                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding WhatsAppWebhookAppSecretRef}" Watermark="env:WHATSAPP_APP_SECRET" />
+                                    <TextBox Grid.Row="4" Grid.Column="0" Text="{Binding WhatsAppCloudApiToken}" PasswordChar="•" Watermark="Cloud API token" />
+                                    <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding WhatsAppCloudApiTokenRef}" Watermark="env:WHATSAPP_CLOUD_API_TOKEN" />
+                                    <TextBox Grid.Row="5" Grid.Column="0" Text="{Binding WhatsAppPhoneNumberId}" Watermark="Phone number ID" />
+                                    <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding WhatsAppBusinessAccountId}" Watermark="Business account ID" />
+                                    <TextBox Grid.Row="6" Grid.Column="0" Text="{Binding WhatsAppBridgeUrl}" Watermark="Built-in bridge URL" />
+                                    <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding WhatsAppBridgeTokenRef}" Watermark="env:WHATSAPP_BRIDGE_TOKEN" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                    <TextBox Grid.Column="0" Text="{Binding WhatsAppBridgeToken}" PasswordChar="•" Watermark="Built-in bridge token" />
+                                    <CheckBox Grid.Column="1" Content="Suppress bridge send exceptions" IsChecked="{Binding WhatsAppBridgeSuppressSendExceptions}" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <TextBlock Text="Plugin-backed bridge" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding WhatsAppPluginWarning}" TextWrapping="Wrap" />
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                    <CheckBox Grid.Column="0" Content="Plugin detected" IsChecked="{Binding WhatsAppPluginDetected}" IsEnabled="False" />
+                                    <TextBox Grid.Column="1" Text="{Binding WhatsAppPluginId}" Watermark="Plugin ID" />
+                                </Grid>
+                                <TextBox Text="{Binding WhatsAppPluginConfigJson}" AcceptsReturn="True" TextWrapping="Wrap"
+                                         MinHeight="140" Watermark="Plugin config JSON" />
+                                <TextBox Text="{Binding WhatsAppFirstPartyWorkerConfigJson}" AcceptsReturn="True" TextWrapping="Wrap"
+                                         MinHeight="140" Watermark="First-party worker config JSON" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid ColumnDefinitions="3*,2*" ColumnSpacing="12">
+                            <Border Grid.Column="0" Padding="10" CornerRadius="8" BorderThickness="1"
+                                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Auth state" FontWeight="SemiBold" />
+                                    <TextBox Text="{Binding WhatsAppAuthSummary}" IsReadOnly="True" AcceptsReturn="True"
+                                             TextWrapping="Wrap" MinHeight="180" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="1" Padding="10" CornerRadius="8" BorderThickness="1"
+                                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="QR code" FontWeight="SemiBold" />
+                                    <Image Source="{Binding WhatsAppQrImage}" Width="240" Height="240" Stretch="Uniform" HorizontalAlignment="Center" />
+                                    <TextBox Text="{Binding WhatsAppQrData}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="120" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                            <Border Grid.Column="0" Padding="10" CornerRadius="8" BorderThickness="1"
+                                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Warnings" FontWeight="SemiBold" />
+                                    <TextBox Text="{Binding WhatsAppWarnings}" IsReadOnly="True" AcceptsReturn="True"
+                                             TextWrapping="Wrap" MinHeight="120" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="1" Padding="10" CornerRadius="8" BorderThickness="1"
+                                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Validation errors" FontWeight="SemiBold" />
+                                    <TextBox Text="{Binding WhatsAppValidationErrors}" IsReadOnly="True" AcceptsReturn="True"
+                                             TextWrapping="Wrap" MinHeight="120" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
     </Grid>
 
 </Window>

@@ -10,6 +10,8 @@ namespace OpenClaw.Gateway.Endpoints;
 
 internal static class OpenAiEndpoints
 {
+    private const int MaxChatCompletionRequestBytes = 1024 * 1024;
+
     public static void MapOpenClawOpenAiEndpoints(
         this WebApplication app,
         GatewayStartupContext startup,
@@ -33,10 +35,17 @@ internal static class OpenAiEndpoints
             OpenAiChatCompletionRequest? req;
             try
             {
-                req = await JsonSerializer.DeserializeAsync(
-                    ctx.Request.Body,
-                    CoreJsonContext.Default.OpenAiChatCompletionRequest,
-                    ctx.RequestAborted);
+                var (bodyOk, bodyText) = await EndpointHelpers.TryReadBodyTextAsync(ctx, MaxChatCompletionRequestBytes, ctx.RequestAborted);
+                if (!bodyOk)
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+                    await ctx.Response.WriteAsync("Request too large.", ctx.RequestAborted);
+                    return;
+                }
+
+                req = JsonSerializer.Deserialize(
+                    bodyText,
+                    CoreJsonContext.Default.OpenAiChatCompletionRequest);
             }
             catch
             {

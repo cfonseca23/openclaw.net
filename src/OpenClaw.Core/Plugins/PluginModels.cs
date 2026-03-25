@@ -746,6 +746,87 @@ public sealed class BridgeChannelSendRequest
     public required string ChannelId { get; init; }
     public required string RecipientId { get; init; }
     public required string Text { get; init; }
+    public string? SessionId { get; init; }
+    public string? ReplyToMessageId { get; init; }
+    public string? Subject { get; init; }
+    public BridgeMediaAttachment[]? Attachments { get; init; }
+}
+
+/// <summary>
+/// Media attachment for bridge channel messages.
+/// </summary>
+public sealed class BridgeMediaAttachment
+{
+    /// <summary>Media type: "image", "video", "audio", "document", "sticker".</summary>
+    public required string Type { get; init; }
+
+    /// <summary>HTTP URL or file path to the media.</summary>
+    public string? Url { get; init; }
+
+    /// <summary>Optional caption for the media.</summary>
+    public string? Caption { get; init; }
+
+    /// <summary>MIME type hint (e.g. "audio/ogg; codecs=opus").</summary>
+    public string? MimeType { get; init; }
+
+    /// <summary>Original file name.</summary>
+    public string? FileName { get; init; }
+
+    /// <summary>When true, video should be sent as an animated GIF.</summary>
+    public bool GifPlayback { get; init; }
+}
+
+/// <summary>
+/// Request to send a typing indicator through a bridge channel.
+/// </summary>
+public sealed class BridgeChannelTypingRequest
+{
+    public required string ChannelId { get; init; }
+    public required string RecipientId { get; init; }
+    public bool IsTyping { get; init; } = true;
+}
+
+/// <summary>
+/// Request to send a read receipt through a bridge channel.
+/// </summary>
+public sealed class BridgeChannelReceiptRequest
+{
+    public required string ChannelId { get; init; }
+    public required string MessageId { get; init; }
+    public string? RemoteJid { get; init; }
+    public string? Participant { get; init; }
+}
+
+/// <summary>
+/// Request to send a reaction through a bridge channel.
+/// </summary>
+public sealed class BridgeChannelReactionRequest
+{
+    public required string ChannelId { get; init; }
+    public required string MessageId { get; init; }
+    public required string Emoji { get; init; }
+    public string? RemoteJid { get; init; }
+    public string? Participant { get; init; }
+}
+
+/// <summary>
+/// Auth event notification from a bridge channel (e.g. QR code for WhatsApp linking).
+/// </summary>
+public sealed class BridgeChannelAuthEvent
+{
+    public required string ChannelId { get; init; }
+
+    /// <summary>Auth state: "qr_code", "connected", "disconnected", "error".</summary>
+    public required string State { get; init; }
+
+    /// <summary>State-specific data (QR string, error message, etc.).</summary>
+    public string? Data { get; init; }
+
+    /// <summary>Account identifier for multi-account channels.</summary>
+    public string? AccountId { get; init; }
+
+    /// <summary>Timestamp assigned when the gateway receives the auth event.</summary>
+    public DateTimeOffset UpdatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
 }
 
 public sealed class BridgeCommandExecuteRequest

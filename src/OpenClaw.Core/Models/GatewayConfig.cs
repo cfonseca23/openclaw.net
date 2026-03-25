@@ -245,7 +245,7 @@ public sealed class ChannelsConfig
 public sealed class WhatsAppChannelConfig
 {
     public bool Enabled { get; set; } = false;
-    public string Type { get; set; } = "official"; // "official" or "bridge"
+    public string Type { get; set; } = "official"; // "official", "bridge", or "first_party_worker"
     public string DmPolicy { get; set; } = "pairing"; // open, pairing, closed
     public string WebhookPath { get; set; } = "/whatsapp/inbound";
     public string? WebhookPublicBaseUrl { get; set; }
@@ -276,6 +276,9 @@ public sealed class WhatsAppChannelConfig
     public string BridgeTokenRef { get; set; } = "env:WHATSAPP_BRIDGE_TOKEN";
     public bool BridgeSuppressSendExceptions { get; set; } = false;
 
+    // First-party worker settings
+    public WhatsAppFirstPartyWorkerConfig FirstPartyWorker { get; set; } = new();
+
     public int MaxInboundChars { get; set; } = 4096;
 
     /// <summary>Max inbound webhook request size in bytes.</summary>
@@ -283,6 +286,46 @@ public sealed class WhatsAppChannelConfig
 
     /// <summary>Optional allowlist for inbound senders (wa_id / from). Interpreted using Channels.AllowlistSemantics.</summary>
     public string[] AllowedFromIds { get; set; } = [];
+}
+
+public sealed class WhatsAppFirstPartyWorkerConfig
+{
+    /// <summary>
+    /// Worker transport engine. "baileys_csharp" is the intended production engine;
+    /// "simulated" is available for tests and dry-run validation.
+    /// </summary>
+    public string Driver { get; set; } = "baileys_csharp";
+
+    /// <summary>
+    /// Optional explicit path to the worker executable or DLL. When empty, the gateway tries
+    /// colocated deployment paths before failing.
+    /// </summary>
+    public string? ExecutablePath { get; set; }
+
+    /// <summary>Optional explicit working directory for the worker child process.</summary>
+    public string? WorkingDirectory { get; set; }
+
+    /// <summary>Root path used by the worker for session, media, and cache files.</summary>
+    public string StoragePath { get; set; } = "./memory/whatsapp-worker";
+
+    public string? MediaCachePath { get; set; }
+    public bool HistorySync { get; set; } = true;
+    public string? Proxy { get; set; }
+    public List<WhatsAppWorkerAccountConfig> Accounts { get; set; } = [];
+}
+
+public sealed class WhatsAppWorkerAccountConfig
+{
+    public string AccountId { get; set; } = "default";
+    public string SessionPath { get; set; } = "./session/default";
+    public string DeviceName { get; set; } = "OpenClaw";
+    public string PairingMode { get; set; } = "qr"; // "qr" or "pairing_code"
+    public string? PhoneNumber { get; set; }
+    public bool SendReadReceipts { get; set; } = true;
+    public bool AckReaction { get; set; } = false;
+    public string? MediaCachePath { get; set; }
+    public bool HistorySync { get; set; } = true;
+    public string? Proxy { get; set; }
 }
 
 public sealed class SmsChannelConfig

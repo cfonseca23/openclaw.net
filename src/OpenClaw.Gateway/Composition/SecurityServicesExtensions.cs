@@ -22,6 +22,10 @@ internal static class SecurityServicesExtensions
                 AdminSettingsService.GetSettingsPath(startup.Config),
                 sp.GetRequiredService<ILogger<AdminSettingsService>>()));
         services.AddSingleton(sp =>
+            new PluginAdminSettingsService(
+                startup.Config,
+                sp.GetRequiredService<ILogger<PluginAdminSettingsService>>()));
+        services.AddSingleton(sp =>
             new ApprovalAuditStore(
                 startup.Config.Memory.StoragePath,
                 sp.GetRequiredService<ILogger<ApprovalAuditStore>>()));

@@ -193,6 +193,30 @@ internal static class ChannelReadinessEvaluator
                 });
             }
         }
+        else if (string.Equals(whatsapp.Type, "first_party_worker", StringComparison.OrdinalIgnoreCase))
+        {
+            if (whatsapp.FirstPartyWorker.Accounts.Count == 0)
+            {
+                missing.Add("WhatsApp first-party worker account configuration");
+                guidance.Add(new ChannelFixGuidance
+                {
+                    Label = "Add a first-party worker account",
+                    Href = "#wa-first-party-worker-config-json-input",
+                    Reference = "OpenClaw:Channels:WhatsApp:FirstPartyWorker:Accounts"
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(whatsapp.FirstPartyWorker.ExecutablePath))
+            {
+                warnings.Add("WhatsApp first-party worker executable path is not configured; runtime will rely on colocated auto-discovery.");
+                guidance.Add(new ChannelFixGuidance
+                {
+                    Label = "Set first-party worker executable path",
+                    Href = "#wa-first-party-worker-config-json-input",
+                    Reference = "OpenClaw:Channels:WhatsApp:FirstPartyWorker:ExecutablePath"
+                });
+            }
+        }
         else
         {
             var cloudToken = ResolveSecretRefOrNull(whatsapp.CloudApiTokenRef) ?? whatsapp.CloudApiToken;

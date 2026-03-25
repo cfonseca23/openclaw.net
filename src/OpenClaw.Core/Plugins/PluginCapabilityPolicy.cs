@@ -4,6 +4,12 @@ namespace OpenClaw.Core.Plugins;
 
 public static class PluginCapabilityPolicy
 {
+    public enum ExecutionHostKind
+    {
+        Bridge,
+        NativeDynamic
+    }
+
     public const string Tools = "tools";
     public const string Services = "services";
     public const string Skills = "skills";
@@ -13,13 +19,6 @@ public static class PluginCapabilityPolicy
     public const string Hooks = "hooks";
     public const string NativeDynamic = "native_dynamic";
 
-    private static readonly HashSet<string> AotSafeCapabilities = new(StringComparer.Ordinal)
-    {
-        Tools,
-        Services,
-        Skills
-    };
-
     public static string[] Normalize(IEnumerable<string> capabilities)
         => capabilities
             .Where(cap => !string.IsNullOrWhiteSpace(cap))
@@ -28,17 +27,30 @@ public static class PluginCapabilityPolicy
             .OrderBy(cap => cap, StringComparer.Ordinal)
             .ToArray();
 
-    public static string[] GetBlockedCapabilities(GatewayRuntimeMode runtimeMode, IEnumerable<string> capabilities)
+    public static string[] GetBlockedCapabilities(
+        GatewayRuntimeMode runtimeMode,
+        IEnumerable<string> capabilities,
+        ExecutionHostKind hostKind)
     {
         var normalized = Normalize(capabilities);
         if (runtimeMode != GatewayRuntimeMode.Aot)
             return [];
 
-        return normalized
-            .Where(cap => !AotSafeCapabilities.Contains(cap))
-            .ToArray();
+        return hostKind switch
+        {
+            // Bridge plugins execute out-of-process behind a typed JSON-RPC boundary,
+            // so the existing bridge surfaces are AOT-safe.
+            ExecutionHostKind.Bridge => [],
+
+            // Dynamic native plugins depend on reflection and runtime loading.
+            ExecutionHostKind.NativeDynamic => normalized,
+            _ => normalized
+        };
     }
 
-    public static bool RequiresJit(GatewayRuntimeMode runtimeMode, IEnumerable<string> capabilities)
-        => GetBlockedCapabilities(runtimeMode, capabilities).Length > 0;
+    public static bool RequiresJit(
+        GatewayRuntimeMode runtimeMode,
+        IEnumerable<string> capabilities,
+        ExecutionHostKind hostKind)
+        => GetBlockedCapabilities(runtimeMode, capabilities, hostKind).Length > 0;
 }

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
@@ -11,6 +12,7 @@ namespace OpenClawNet.Sandbox.OpenSandbox;
 
 public sealed class OpenSandboxToolSandbox : IToolSandbox, IAsyncDisposable
 {
+    private static readonly Regex EnvironmentVariableNameRegex = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
     private readonly HttpClient _httpClient;
     private readonly OpenSandboxOptions _options;
     private readonly ILogger<OpenSandboxToolSandbox>? _logger;
@@ -82,7 +84,7 @@ public sealed class OpenSandboxToolSandbox : IToolSandbox, IAsyncDisposable
         _disposed = true;
 
         List<SandboxLease> leases;
-        await _leaseGate.WaitAsync();
+        await _leaseGate.WaitAsync(CancellationToken.None);
         try
         {
             leases = [.. _leases.Values];
@@ -103,7 +105,8 @@ public sealed class OpenSandboxToolSandbox : IToolSandbox, IAsyncDisposable
         SandboxLease lease,
         SandboxExecutionRequest request,
         int ttl,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowLeaseRecovery = true)
     {
         try
         {
@@ -130,12 +133,11 @@ public sealed class OpenSandboxToolSandbox : IToolSandbox, IAsyncDisposable
         }
         catch (OpenSandboxMissingLeaseException)
         {
-            if (string.IsNullOrWhiteSpace(request.LeaseKey))
+            if (!allowLeaseRecovery || string.IsNullOrWhiteSpace(request.LeaseKey))
                 throw;
 
-            await RemoveLeaseAsync(request.LeaseKey);
-            var recreatedLease = await EnsureLeaseAsync(request.LeaseKey, request.Template!, ttl, cancellationToken);
-            return await ExecuteAgainstLeaseAsync(recreatedLease, request, ttl, cancellationToken);
+            var recreatedLease = await RecoverMissingLeaseAsync(request.LeaseKey, request.Template!, ttl, lease, cancellationToken);
+            return await ExecuteAgainstLeaseAsync(recreatedLease, request, ttl, cancellationToken, allowLeaseRecovery: false);
         }
     }
 
@@ -254,12 +256,29 @@ public sealed class OpenSandboxToolSandbox : IToolSandbox, IAsyncDisposable
             await DeleteSandboxBestEffortAsync(lease.SandboxId, cancellationToken);
     }
 
-    private async Task RemoveLeaseAsync(string leaseKey)
+    private async Task<SandboxLease> RecoverMissingLeaseAsync(
+        string leaseKey,
+        string template,
+        int ttl,
+        SandboxLease failedLease,
+        CancellationToken cancellationToken)
     {
-        await _leaseGate.WaitAsync();
+        await _leaseGate.WaitAsync(cancellationToken);
         try
         {
+            if (_leases.TryGetValue(leaseKey, out var existing) &&
+                !ReferenceEquals(existing, failedLease) &&
+                existing.ExpiresAt > DateTimeOffset.UtcNow &&
+                string.Equals(existing.Template, template, StringComparison.Ordinal))
+            {
+                return existing;
+            }
+
             _leases.Remove(leaseKey);
+
+            var created = await CreateLeaseAsync(template, ttl, leaseKey, cancellationToken);
+            _leases[leaseKey] = created;
+            return created;
         }
         finally
         {
@@ -357,6 +376,9 @@ public sealed class OpenSandboxToolSandbox : IToolSandbox, IAsyncDisposable
         {
             foreach (var pair in environment.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
             {
+                if (!EnvironmentVariableNameRegex.IsMatch(pair.Key))
+                    throw new ToolSandboxException($"Invalid sandbox environment variable name '{pair.Key}'.");
+
                 builder.Append("export ");
                 builder.Append(pair.Key);
                 builder.Append('=');

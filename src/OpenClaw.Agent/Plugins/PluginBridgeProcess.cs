@@ -20,6 +20,7 @@ public sealed class PluginBridgeProcess : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly BridgeTransportConfig _transportConfig;
+    private readonly BridgeProcessLaunchSpec? _launchSpec;
     private IBridgeTransport? _transport;
     private BridgeTransportRuntimeConfig _runtimeTransport = new();
     private string? _entryPath;
@@ -40,11 +41,16 @@ public sealed class PluginBridgeProcess : IAsyncDisposable
         _transport?.SetNotificationHandler(handler);
     }
 
-    public PluginBridgeProcess(string bridgeScriptPath, ILogger logger, BridgeTransportConfig? transportConfig = null)
+    public PluginBridgeProcess(
+        string bridgeScriptPath,
+        ILogger logger,
+        BridgeTransportConfig? transportConfig = null,
+        BridgeProcessLaunchSpec? launchSpec = null)
     {
         _bridgeScriptPath = bridgeScriptPath;
         _logger = logger;
         _transportConfig = transportConfig ?? new BridgeTransportConfig();
+        _launchSpec = launchSpec;
     }
 
     /// <summary>
@@ -299,6 +305,9 @@ public sealed class PluginBridgeProcess : IAsyncDisposable
 
     private Process StartProcess(string entryPath, BridgeTransportRuntimeConfig transport)
     {
+        if (_launchSpec is not null)
+            return StartExternalProcess(transport);
+
         var nodeExe = FindNodeExecutable()
             ?? throw new InvalidOperationException(
                 "Node.js is required for OpenClaw plugin support but was not found. " +
@@ -329,6 +338,49 @@ public sealed class PluginBridgeProcess : IAsyncDisposable
         {
             if (!string.IsNullOrWhiteSpace(e.Data))
                 _logger.LogInformation("[Node] {Output}", e.Data);
+        };
+        process.BeginErrorReadLine();
+        return process;
+    }
+
+    private Process StartExternalProcess(BridgeTransportRuntimeConfig transport)
+    {
+        var launchSpec = _launchSpec
+            ?? throw new InvalidOperationException("External launch spec is not configured.");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = launchSpec.FileName,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = launchSpec.WorkingDirectory ?? Environment.CurrentDirectory
+        };
+
+        foreach (var argument in launchSpec.Arguments)
+            psi.ArgumentList.Add(argument);
+
+        psi.Environment["OPENCLAW_BRIDGE_TRANSPORT_MODE"] = transport.Mode;
+        if (!string.IsNullOrWhiteSpace(transport.SocketPath))
+            psi.Environment["OPENCLAW_BRIDGE_SOCKET_PATH"] = transport.SocketPath;
+        foreach (var (name, value) in launchSpec.EnvironmentVariables)
+        {
+            if (value is null)
+                psi.Environment.Remove(name);
+            else
+                psi.Environment[name] = value;
+        }
+
+        var process = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start bridge child process '{launchSpec.FileName}'.");
+
+        process.EnableRaisingEvents = true;
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+                _logger.LogInformation("[Bridge] {Output}", e.Data);
         };
         process.BeginErrorReadLine();
         return process;
@@ -401,77 +453,7 @@ public sealed class PluginBridgeProcess : IAsyncDisposable
     private static JsonElement Serialize<T>(T value, JsonTypeInfo<T> typeInfo)
         => JsonSerializer.SerializeToElement(value, typeInfo);
 
-    private static string? FindNodeExecutable()
-    {
-        string[] candidates = OperatingSystem.IsWindows()
-            ? ["node.exe"]
-            : ["node"];
-
-        foreach (var candidate in candidates)
-        {
-            try
-            {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = OperatingSystem.IsWindows() ? "where" : "which",
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                psi.ArgumentList.Add(candidate);
-
-                using var proc = Process.Start(psi);
-                if (proc is null) continue;
-                var output = proc.StandardOutput.ReadToEnd().Trim();
-                proc.WaitForExit();
-
-                if (proc.ExitCode == 0 && !string.IsNullOrEmpty(output))
-                    return output.Split('\n', '\r')[0].Trim();
-            }
-            catch { }
-        }
-
-        string[] commonPaths = OperatingSystem.IsWindows()
-            ? [
-                @"C:\Program Files\nodejs\node.exe",
-                @"C:\Program Files (x86)\nodejs\node.exe",
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @"AppData\Roaming\nvm\v* \node.exe")
-              ]
-            : [
-                "/usr/local/bin/node",
-                "/usr/bin/node",
-                "/opt/homebrew/bin/node",
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nvm/versions/node/v*/bin/node")
-              ];
-
-        foreach (var path in commonPaths)
-        {
-            if (path.Contains('*'))
-            {
-                var dir = Path.GetDirectoryName(path);
-                if (dir is null) continue;
-
-                var pattern = Path.GetFileName(path);
-                var parent = Path.GetDirectoryName(dir);
-                var subDirPattern = Path.GetFileName(dir);
-
-                if (parent is not null && subDirPattern is not null && Directory.Exists(parent))
-                {
-                    foreach (var subDir in Directory.GetDirectories(parent, subDirPattern))
-                    {
-                        var fullPath = Path.Combine(subDir, pattern);
-                        if (File.Exists(fullPath)) return fullPath;
-                    }
-                }
-            }
-            else if (File.Exists(path))
-            {
-                return path;
-            }
-        }
-
-        return null;
-    }
+    private static string? FindNodeExecutable() => RuntimeDiscovery.FindNodeExecutable();
 }
 
 public sealed class PluginBridgeMemorySnapshot

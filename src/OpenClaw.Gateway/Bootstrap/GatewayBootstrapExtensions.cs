@@ -122,6 +122,12 @@ internal static class GatewayBootstrapExtensions
         var config = openClawSection.Get<GatewayConfig>() ?? new GatewayConfig();
         ApplyConfiguredToolingOverrides(openClawSection, config);
         HydratePluginEntryConfigJson(config, configuration);
+        var pluginAdminSettingsPath = PluginAdminSettingsService.GetSettingsPath(config);
+        if (PluginAdminSettingsService.TryLoadPersistedEntries(pluginAdminSettingsPath, out var pluginEntries, out _)
+            && pluginEntries is not null)
+        {
+            PluginAdminSettingsService.ApplyEntries(config, pluginEntries);
+        }
         ApplyEnvironmentOverrides(config);
         return config;
     }

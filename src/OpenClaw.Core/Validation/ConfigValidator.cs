@@ -181,12 +181,37 @@ public static class ConfigValidator
             errors.Add($"Channels.WhatsApp.MaxInboundChars must be >= 1 (got {config.Channels.WhatsApp.MaxInboundChars}).");
         if (config.Channels.WhatsApp.MaxRequestBytes < 1024)
             errors.Add($"Channels.WhatsApp.MaxRequestBytes must be >= 1024 (got {config.Channels.WhatsApp.MaxRequestBytes}).");
+        if (config.Channels.WhatsApp.Type is not ("official" or "bridge" or "first_party_worker"))
+            errors.Add("Channels.WhatsApp.Type must be 'official', 'bridge', or 'first_party_worker'.");
         if (config.Channels.WhatsApp.ValidateSignature)
         {
             var appSecret = SecretResolver.Resolve(config.Channels.WhatsApp.WebhookAppSecretRef)
                 ?? config.Channels.WhatsApp.WebhookAppSecret;
             if (string.IsNullOrWhiteSpace(appSecret))
                 errors.Add("Channels.WhatsApp.ValidateSignature is true but WebhookAppSecret/WebhookAppSecretRef is not configured.");
+        }
+        if (string.Equals(config.Channels.WhatsApp.Type, "first_party_worker", StringComparison.OrdinalIgnoreCase))
+        {
+            var worker = config.Channels.WhatsApp.FirstPartyWorker;
+            if (worker.Driver is not ("baileys_csharp" or "simulated"))
+                errors.Add("Channels.WhatsApp.FirstPartyWorker.Driver must be 'baileys_csharp' or 'simulated'.");
+            if (worker.Accounts.Count == 0)
+                errors.Add("Channels.WhatsApp.FirstPartyWorker.Accounts must contain at least one account.");
+
+            foreach (var account in worker.Accounts)
+            {
+                if (string.IsNullOrWhiteSpace(account.AccountId))
+                    errors.Add("Channels.WhatsApp.FirstPartyWorker.Accounts[].AccountId must be set.");
+                if (string.IsNullOrWhiteSpace(account.SessionPath))
+                    errors.Add($"Channels.WhatsApp.FirstPartyWorker account '{account.AccountId}' must set SessionPath.");
+                if (account.PairingMode is not ("qr" or "pairing_code"))
+                    errors.Add($"Channels.WhatsApp.FirstPartyWorker account '{account.AccountId}' PairingMode must be 'qr' or 'pairing_code'.");
+                if (string.Equals(account.PairingMode, "pairing_code", StringComparison.OrdinalIgnoreCase) &&
+                    string.IsNullOrWhiteSpace(account.PhoneNumber))
+                {
+                    errors.Add($"Channels.WhatsApp.FirstPartyWorker account '{account.AccountId}' requires PhoneNumber for pairing_code mode.");
+                }
+            }
         }
         if (!config.Channels.AllowlistSemantics.Equals("legacy", StringComparison.OrdinalIgnoreCase) &&
             !config.Channels.AllowlistSemantics.Equals("strict", StringComparison.OrdinalIgnoreCase))

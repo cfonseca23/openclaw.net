@@ -221,7 +221,10 @@ public sealed class PluginHost : IAsyncDisposable
             return;
         }
 
-        var blockedCapabilities = PluginCapabilityPolicy.GetBlockedCapabilities(_runtimeState.EffectiveMode, requestedCapabilities);
+        var blockedCapabilities = PluginCapabilityPolicy.GetBlockedCapabilities(
+            _runtimeState.EffectiveMode,
+            requestedCapabilities,
+            PluginCapabilityPolicy.ExecutionHostKind.Bridge);
         if (blockedCapabilities.Length > 0)
         {
             var message =
@@ -303,26 +306,39 @@ public sealed class PluginHost : IAsyncDisposable
             _logger.LogInformation("  Registered channel '{ChannelId}' from plugin '{PluginId}'", ch.Id, id);
         }
 
-        // Wire notification handler to dispatch channel messages to the correct adapter
+        // Wire notification handler to dispatch channel messages and auth events to the correct adapter
         if (channelAdapters.Count > 0)
         {
             bridge.SetNotificationHandler(notification =>
             {
-                if (notification.Notification == "channel_message" && notification.Params is { } p)
+                if (notification.Params is not { } p) return;
+
+                var channelId = p.TryGetProperty("channelId", out var cid) ? cid.GetString() : null;
+                if (channelId is null) return;
+
+                var target = channelAdapters.Find(a => a.ChannelId == channelId);
+                if (target is null) return;
+
+                switch (notification.Notification)
                 {
-                    var channelId = p.TryGetProperty("channelId", out var cid) ? cid.GetString() : null;
-                    if (channelId is not null)
-                    {
-                        var target = channelAdapters.Find(a => a.ChannelId == channelId);
-                        if (target is not null)
+                    case "channel_message":
+                        _ = Task.Run(async () =>
                         {
-                            _ = Task.Run(async () =>
-                            {
-                                try { await target.HandleInboundAsync(p, CancellationToken.None); }
-                                catch (Exception ex) { _logger.LogWarning(ex, "Failed to handle inbound channel message for '{ChannelId}'", channelId); }
-                            });
-                        }
-                    }
+                            try { await target.HandleInboundAsync(p, CancellationToken.None); }
+                            catch (Exception ex) { _logger.LogWarning(ex, "Failed to handle inbound channel message for '{ChannelId}'", channelId); }
+                        });
+                        break;
+
+                    case "channel_auth_event":
+                        try { target.HandleAuthEvent(p); }
+                        catch (Exception ex) { _logger.LogWarning(ex, "Failed to handle auth event for '{ChannelId}'", channelId); }
+                        break;
+
+                    case "channel_typing":
+                    case "channel_receipt":
+                    case "channel_reaction":
+                        _logger.LogDebug("Received {Notification} notification from plugin channel '{ChannelId}'", notification.Notification, channelId);
+                        break;
                 }
             });
         }

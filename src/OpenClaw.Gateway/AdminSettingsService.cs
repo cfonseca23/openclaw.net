@@ -75,7 +75,23 @@ internal sealed class AdminSettingsService
             TelegramDmPolicy = config.Channels.Telegram.DmPolicy,
             WhatsAppEnabled = config.Channels.WhatsApp.Enabled,
             WhatsAppValidateSignature = config.Channels.WhatsApp.ValidateSignature,
-            WhatsAppDmPolicy = config.Channels.WhatsApp.DmPolicy
+            WhatsAppDmPolicy = config.Channels.WhatsApp.DmPolicy,
+            WhatsAppType = config.Channels.WhatsApp.Type,
+            WhatsAppWebhookPath = config.Channels.WhatsApp.WebhookPath,
+            WhatsAppWebhookPublicBaseUrl = config.Channels.WhatsApp.WebhookPublicBaseUrl,
+            WhatsAppWebhookVerifyToken = config.Channels.WhatsApp.WebhookVerifyToken,
+            WhatsAppWebhookVerifyTokenRef = config.Channels.WhatsApp.WebhookVerifyTokenRef,
+            WhatsAppWebhookAppSecret = config.Channels.WhatsApp.WebhookAppSecret,
+            WhatsAppWebhookAppSecretRef = config.Channels.WhatsApp.WebhookAppSecretRef,
+            WhatsAppCloudApiToken = config.Channels.WhatsApp.CloudApiToken,
+            WhatsAppCloudApiTokenRef = config.Channels.WhatsApp.CloudApiTokenRef,
+            WhatsAppPhoneNumberId = config.Channels.WhatsApp.PhoneNumberId,
+            WhatsAppBusinessAccountId = config.Channels.WhatsApp.BusinessAccountId,
+            WhatsAppBridgeUrl = config.Channels.WhatsApp.BridgeUrl,
+            WhatsAppBridgeToken = config.Channels.WhatsApp.BridgeToken,
+            WhatsAppBridgeTokenRef = config.Channels.WhatsApp.BridgeTokenRef,
+            WhatsAppBridgeSuppressSendExceptions = config.Channels.WhatsApp.BridgeSuppressSendExceptions,
+            WhatsAppFirstPartyWorker = CloneWhatsAppFirstPartyWorker(config.Channels.WhatsApp.FirstPartyWorker)
         };
 
     public static bool TryLoadPersistedSnapshot(string settingsPath, out AdminSettingsSnapshot? snapshot, out string? error)
@@ -145,6 +161,22 @@ internal sealed class AdminSettingsService
         config.Channels.WhatsApp.Enabled = snapshot.WhatsAppEnabled;
         config.Channels.WhatsApp.ValidateSignature = snapshot.WhatsAppValidateSignature;
         config.Channels.WhatsApp.DmPolicy = snapshot.WhatsAppDmPolicy;
+        config.Channels.WhatsApp.Type = snapshot.WhatsAppType;
+        config.Channels.WhatsApp.WebhookPath = snapshot.WhatsAppWebhookPath;
+        config.Channels.WhatsApp.WebhookPublicBaseUrl = snapshot.WhatsAppWebhookPublicBaseUrl;
+        config.Channels.WhatsApp.WebhookVerifyToken = snapshot.WhatsAppWebhookVerifyToken;
+        config.Channels.WhatsApp.WebhookVerifyTokenRef = snapshot.WhatsAppWebhookVerifyTokenRef;
+        config.Channels.WhatsApp.WebhookAppSecret = snapshot.WhatsAppWebhookAppSecret;
+        config.Channels.WhatsApp.WebhookAppSecretRef = snapshot.WhatsAppWebhookAppSecretRef;
+        config.Channels.WhatsApp.CloudApiToken = snapshot.WhatsAppCloudApiToken;
+        config.Channels.WhatsApp.CloudApiTokenRef = snapshot.WhatsAppCloudApiTokenRef;
+        config.Channels.WhatsApp.PhoneNumberId = snapshot.WhatsAppPhoneNumberId;
+        config.Channels.WhatsApp.BusinessAccountId = snapshot.WhatsAppBusinessAccountId;
+        config.Channels.WhatsApp.BridgeUrl = snapshot.WhatsAppBridgeUrl;
+        config.Channels.WhatsApp.BridgeToken = snapshot.WhatsAppBridgeToken;
+        config.Channels.WhatsApp.BridgeTokenRef = snapshot.WhatsAppBridgeTokenRef;
+        config.Channels.WhatsApp.BridgeSuppressSendExceptions = snapshot.WhatsAppBridgeSuppressSendExceptions;
+        config.Channels.WhatsApp.FirstPartyWorker = CloneWhatsAppFirstPartyWorker(snapshot.WhatsAppFirstPartyWorker);
     }
 
     public AdminSettingsSnapshot GetSnapshot()
@@ -224,6 +256,15 @@ internal sealed class AdminSettingsService
         }
     }
 
+    public AdminSettingsResult UpdateWhatsAppSettings(WhatsAppSetupRequest request)
+    {
+        lock (_gate)
+        {
+            var current = CreateSnapshot(_config);
+            return Update(CloneSnapshotWithWhatsApp(current, request));
+        }
+    }
+
     public static IReadOnlyList<string> ImmediateFieldKeys { get; } =
     [
         "usageFooter",
@@ -267,7 +308,23 @@ internal sealed class AdminSettingsService
         "channels.telegram.enabled",
         "channels.telegram.validateSignature",
         "channels.whatsapp.enabled",
-        "channels.whatsapp.validateSignature"
+        "channels.whatsapp.validateSignature",
+        "channels.whatsapp.type",
+        "channels.whatsapp.webhookPath",
+        "channels.whatsapp.webhookPublicBaseUrl",
+        "channels.whatsapp.webhookVerifyToken",
+        "channels.whatsapp.webhookVerifyTokenRef",
+        "channels.whatsapp.webhookAppSecret",
+        "channels.whatsapp.webhookAppSecretRef",
+        "channels.whatsapp.cloudApiToken",
+        "channels.whatsapp.cloudApiTokenRef",
+        "channels.whatsapp.phoneNumberId",
+        "channels.whatsapp.businessAccountId",
+        "channels.whatsapp.bridgeUrl",
+        "channels.whatsapp.bridgeToken",
+        "channels.whatsapp.bridgeTokenRef",
+        "channels.whatsapp.bridgeSuppressSendExceptions",
+        "channels.whatsapp.firstPartyWorker"
     ];
 
     private void PersistSnapshot(AdminSettingsSnapshot snapshot)
@@ -334,6 +391,26 @@ internal sealed class AdminSettingsService
         AddIfChanged(changed, "channels.telegram.validateSignature", before.TelegramValidateSignature, after.TelegramValidateSignature);
         AddIfChanged(changed, "channels.whatsapp.enabled", before.WhatsAppEnabled, after.WhatsAppEnabled);
         AddIfChanged(changed, "channels.whatsapp.validateSignature", before.WhatsAppValidateSignature, after.WhatsAppValidateSignature);
+        AddIfChanged(changed, "channels.whatsapp.type", before.WhatsAppType, after.WhatsAppType);
+        AddIfChanged(changed, "channels.whatsapp.webhookPath", before.WhatsAppWebhookPath, after.WhatsAppWebhookPath);
+        AddIfChanged(changed, "channels.whatsapp.webhookPublicBaseUrl", before.WhatsAppWebhookPublicBaseUrl ?? "", after.WhatsAppWebhookPublicBaseUrl ?? "");
+        AddIfChanged(changed, "channels.whatsapp.webhookVerifyToken", before.WhatsAppWebhookVerifyToken, after.WhatsAppWebhookVerifyToken);
+        AddIfChanged(changed, "channels.whatsapp.webhookVerifyTokenRef", before.WhatsAppWebhookVerifyTokenRef, after.WhatsAppWebhookVerifyTokenRef);
+        AddIfChanged(changed, "channels.whatsapp.webhookAppSecret", before.WhatsAppWebhookAppSecret ?? "", after.WhatsAppWebhookAppSecret ?? "");
+        AddIfChanged(changed, "channels.whatsapp.webhookAppSecretRef", before.WhatsAppWebhookAppSecretRef, after.WhatsAppWebhookAppSecretRef);
+        AddIfChanged(changed, "channels.whatsapp.cloudApiToken", before.WhatsAppCloudApiToken ?? "", after.WhatsAppCloudApiToken ?? "");
+        AddIfChanged(changed, "channels.whatsapp.cloudApiTokenRef", before.WhatsAppCloudApiTokenRef, after.WhatsAppCloudApiTokenRef);
+        AddIfChanged(changed, "channels.whatsapp.phoneNumberId", before.WhatsAppPhoneNumberId ?? "", after.WhatsAppPhoneNumberId ?? "");
+        AddIfChanged(changed, "channels.whatsapp.businessAccountId", before.WhatsAppBusinessAccountId ?? "", after.WhatsAppBusinessAccountId ?? "");
+        AddIfChanged(changed, "channels.whatsapp.bridgeUrl", before.WhatsAppBridgeUrl ?? "", after.WhatsAppBridgeUrl ?? "");
+        AddIfChanged(changed, "channels.whatsapp.bridgeToken", before.WhatsAppBridgeToken ?? "", after.WhatsAppBridgeToken ?? "");
+        AddIfChanged(changed, "channels.whatsapp.bridgeTokenRef", before.WhatsAppBridgeTokenRef, after.WhatsAppBridgeTokenRef);
+        AddIfChanged(changed, "channels.whatsapp.bridgeSuppressSendExceptions", before.WhatsAppBridgeSuppressSendExceptions, after.WhatsAppBridgeSuppressSendExceptions);
+        AddIfChanged(
+            changed,
+            "channels.whatsapp.firstPartyWorker",
+            JsonSerializer.Serialize(before.WhatsAppFirstPartyWorker, CoreJsonContext.Default.WhatsAppFirstPartyWorkerConfig),
+            JsonSerializer.Serialize(after.WhatsAppFirstPartyWorker, CoreJsonContext.Default.WhatsAppFirstPartyWorkerConfig));
         return changed;
     }
 
@@ -342,6 +419,95 @@ internal sealed class AdminSettingsService
     {
         if (!EqualityComparer<T>.Default.Equals(before, after))
             changes.Add(fieldKey);
+    }
+
+    private static AdminSettingsSnapshot CloneSnapshotWithWhatsApp(AdminSettingsSnapshot source, WhatsAppSetupRequest request)
+        => new()
+        {
+            UsageFooter = source.UsageFooter,
+            MaxConcurrentSessions = source.MaxConcurrentSessions,
+            SessionTimeoutMinutes = source.SessionTimeoutMinutes,
+            SessionTokenBudget = source.SessionTokenBudget,
+            SessionRateLimitPerMinute = source.SessionRateLimitPerMinute,
+            AllowQueryStringToken = source.AllowQueryStringToken,
+            BrowserSessionIdleMinutes = source.BrowserSessionIdleMinutes,
+            BrowserRememberDays = source.BrowserRememberDays,
+            AutonomyMode = source.AutonomyMode,
+            RequireToolApproval = source.RequireToolApproval,
+            ToolApprovalTimeoutSeconds = source.ToolApprovalTimeoutSeconds,
+            ParallelToolExecution = source.ParallelToolExecution,
+            AllowShell = source.AllowShell,
+            ReadOnlyMode = source.ReadOnlyMode,
+            EnableBrowserTool = source.EnableBrowserTool,
+            AllowBrowserEvaluate = source.AllowBrowserEvaluate,
+            MaxHistoryTurns = source.MaxHistoryTurns,
+            EnableCompaction = source.EnableCompaction,
+            CompactionThreshold = source.CompactionThreshold,
+            CompactionKeepRecent = source.CompactionKeepRecent,
+            RetentionEnabled = source.RetentionEnabled,
+            RetentionRunOnStartup = source.RetentionRunOnStartup,
+            RetentionSweepIntervalMinutes = source.RetentionSweepIntervalMinutes,
+            RetentionSessionTtlDays = source.RetentionSessionTtlDays,
+            RetentionBranchTtlDays = source.RetentionBranchTtlDays,
+            RetentionArchiveEnabled = source.RetentionArchiveEnabled,
+            RetentionArchiveRetentionDays = source.RetentionArchiveRetentionDays,
+            RetentionMaxItemsPerSweep = source.RetentionMaxItemsPerSweep,
+            AllowlistSemantics = source.AllowlistSemantics,
+            SmsEnabled = source.SmsEnabled,
+            SmsValidateSignature = source.SmsValidateSignature,
+            SmsDmPolicy = source.SmsDmPolicy,
+            TelegramEnabled = source.TelegramEnabled,
+            TelegramValidateSignature = source.TelegramValidateSignature,
+            TelegramDmPolicy = source.TelegramDmPolicy,
+            WhatsAppEnabled = request.Enabled,
+            WhatsAppValidateSignature = request.ValidateSignature,
+            WhatsAppDmPolicy = request.DmPolicy,
+            WhatsAppType = request.Type,
+            WhatsAppWebhookPath = request.WebhookPath,
+            WhatsAppWebhookPublicBaseUrl = request.WebhookPublicBaseUrl,
+            WhatsAppWebhookVerifyToken = request.WebhookVerifyToken,
+            WhatsAppWebhookVerifyTokenRef = request.WebhookVerifyTokenRef,
+            WhatsAppWebhookAppSecret = request.WebhookAppSecret,
+            WhatsAppWebhookAppSecretRef = request.WebhookAppSecretRef,
+            WhatsAppCloudApiToken = request.CloudApiToken,
+            WhatsAppCloudApiTokenRef = request.CloudApiTokenRef,
+            WhatsAppPhoneNumberId = request.PhoneNumberId,
+            WhatsAppBusinessAccountId = request.BusinessAccountId,
+            WhatsAppBridgeUrl = request.BridgeUrl,
+            WhatsAppBridgeToken = request.BridgeToken,
+            WhatsAppBridgeTokenRef = request.BridgeTokenRef,
+            WhatsAppBridgeSuppressSendExceptions = request.BridgeSuppressSendExceptions,
+            WhatsAppFirstPartyWorker = CloneWhatsAppFirstPartyWorker(request.FirstPartyWorker ?? source.WhatsAppFirstPartyWorker)
+        };
+
+    private static WhatsAppFirstPartyWorkerConfig CloneWhatsAppFirstPartyWorker(WhatsAppFirstPartyWorkerConfig? source)
+    {
+        if (source is null)
+            return new WhatsAppFirstPartyWorkerConfig();
+
+        return new WhatsAppFirstPartyWorkerConfig
+        {
+            Driver = source.Driver,
+            ExecutablePath = source.ExecutablePath,
+            WorkingDirectory = source.WorkingDirectory,
+            StoragePath = source.StoragePath,
+            MediaCachePath = source.MediaCachePath,
+            HistorySync = source.HistorySync,
+            Proxy = source.Proxy,
+            Accounts = source.Accounts.Select(static account => new WhatsAppWorkerAccountConfig
+            {
+                AccountId = account.AccountId,
+                SessionPath = account.SessionPath,
+                DeviceName = account.DeviceName,
+                PairingMode = account.PairingMode,
+                PhoneNumber = account.PhoneNumber,
+                SendReadReceipts = account.SendReadReceipts,
+                AckReaction = account.AckReaction,
+                MediaCachePath = account.MediaCachePath,
+                HistorySync = account.HistorySync,
+                Proxy = account.Proxy
+            }).ToList()
+        };
     }
 }
 

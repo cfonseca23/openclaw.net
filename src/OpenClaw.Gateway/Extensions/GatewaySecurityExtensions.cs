@@ -66,6 +66,13 @@ public static class GatewaySecurityExtensions
                         "Set OpenClaw:Channels:WhatsApp:BridgeTokenRef (recommended) or BridgeToken.");
                 }
             }
+            else if (string.Equals(config.Channels.WhatsApp.Type, "first_party_worker", StringComparison.OrdinalIgnoreCase) &&
+                config.Channels.WhatsApp.FirstPartyWorker.Accounts.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with first-party WhatsApp worker enabled without any configured accounts. " +
+                    "Set OpenClaw:Channels:WhatsApp:FirstPartyWorker:Accounts.");
+            }
         }
 
         if (!config.Security.AllowRawSecretRefsOnPublicBind)

@@ -11,7 +11,7 @@ public sealed class OpenClawWebSocketClient : IAsyncDisposable
     private readonly int _maxMessageBytes;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly object _stateLock = new();
-    private ClientWebSocket? _ws;
+    private WebSocket? _ws;
     private CancellationTokenSource? _rxCts;
     private Task? _rxLoop;
 
@@ -58,67 +58,66 @@ public sealed class OpenClawWebSocketClient : IAsyncDisposable
 
     public async Task DisconnectAsync(CancellationToken ct)
     {
-        ClientWebSocket? ws;
+        WebSocket? ws;
         CancellationTokenSource? rxCts;
         Task? rxLoop;
 
-        lock (_stateLock)
-        {
-            ws = _ws;
-            rxCts = _rxCts;
-            rxLoop = _rxLoop;
-            _ws = null;
-            _rxCts = null;
-            _rxLoop = null;
-        }
-
+        await _sendLock.WaitAsync(ct);
         try
         {
+            lock (_stateLock)
+            {
+                ws = _ws;
+                rxCts = _rxCts;
+                rxLoop = _rxLoop;
+                _ws = null;
+                _rxCts = null;
+                _rxLoop = null;
+            }
+
+            try
+            {
+                if (rxCts is not null)
+                    await rxCts.CancelAsync();
+            }
+            catch
+            {
+            }
+
+            if (rxLoop is not null)
+            {
+                try { await rxLoop.WaitAsync(TimeSpan.FromSeconds(2), ct); } catch { }
+            }
+
             if (rxCts is not null)
-                await rxCts.CancelAsync();
-        }
-        catch
-        {
-        }
+            {
+                try { rxCts.Dispose(); } catch { }
+            }
 
-        if (rxLoop is not null)
-        {
-            try { await rxLoop.WaitAsync(TimeSpan.FromSeconds(2), ct); } catch { }
-        }
+            if (ws is null)
+                return;
 
-        if (rxCts is not null)
-        {
-            try { rxCts.Dispose(); } catch { }
-        }
-
-        if (ws is null)
-            return;
-
-        try
-        {
-            if (ws.State is WebSocketState.Open or WebSocketState.CloseReceived)
-                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "client closing", ct);
-        }
-        catch
-        {
+            try
+            {
+                if (ws.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "client closing", ct);
+            }
+            catch
+            {
+            }
+            finally
+            {
+                ws.Dispose();
+            }
         }
         finally
         {
-            ws.Dispose();
+            _sendLock.Release();
         }
     }
 
     public async Task SendUserMessageAsync(string text, string? messageId, string? replyToMessageId, CancellationToken ct)
     {
-        ClientWebSocket? ws;
-        lock (_stateLock)
-        {
-            ws = _ws;
-        }
-
-        if (ws is null || ws.State != WebSocketState.Open)
-            throw new InvalidOperationException("WebSocket is not connected.");
-
         var payload = JsonSerializer.Serialize(
             new WsClientEnvelope
             {
@@ -136,6 +135,15 @@ public sealed class OpenClawWebSocketClient : IAsyncDisposable
         await _sendLock.WaitAsync(ct);
         try
         {
+            WebSocket? ws;
+            lock (_stateLock)
+            {
+                ws = _ws;
+            }
+
+            if (ws is null || ws.State != WebSocketState.Open)
+                throw new InvalidOperationException("WebSocket is not connected.");
+
             await ws.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
         }
         finally
@@ -144,7 +152,7 @@ public sealed class OpenClawWebSocketClient : IAsyncDisposable
         }
     }
 
-    private async Task ReceiveLoopAsync(ClientWebSocket ws, CancellationToken ct)
+    private async Task ReceiveLoopAsync(WebSocket ws, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
         var writer = new ArrayBufferWriter<byte>(16 * 1024);
@@ -173,13 +181,29 @@ public sealed class OpenClawWebSocketClient : IAsyncDisposable
                     continue;
 
                 var text = Encoding.UTF8.GetString(writer.WrittenSpan);
-                OnTextMessage?.Invoke(text);
+                try
+                {
+                    OnTextMessage?.Invoke(text);
+                }
+                catch (Exception ex)
+                {
+                    OnError?.Invoke(ex.Message);
+                }
 
                 try
                 {
                     var envelope = JsonSerializer.Deserialize(text, CoreJsonContext.Default.WsServerEnvelope);
                     if (envelope is not null)
-                        OnEnvelopeReceived?.Invoke(envelope);
+                    {
+                        try
+                        {
+                            OnEnvelopeReceived?.Invoke(envelope);
+                        }
+                        catch (Exception ex)
+                        {
+                            OnError?.Invoke(ex.Message);
+                        }
+                    }
                 }
                 catch
                 {
@@ -204,4 +228,17 @@ public sealed class OpenClawWebSocketClient : IAsyncDisposable
         try { await DisconnectAsync(CancellationToken.None); } catch { }
         _sendLock.Dispose();
     }
+
+    internal void SetConnectedSocketForTest(WebSocket ws)
+    {
+        lock (_stateLock)
+        {
+            _ws = ws;
+            _rxCts = null;
+            _rxLoop = null;
+        }
+    }
+
+    internal Task RunReceiveLoopForTest(WebSocket ws, CancellationToken ct)
+        => ReceiveLoopAsync(ws, ct);
 }

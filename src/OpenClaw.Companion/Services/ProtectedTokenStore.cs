@@ -7,25 +7,29 @@ public sealed class ProtectedTokenStore
 {
     private readonly IDataProtector? _protector;
     private readonly IServiceProvider? _services;
+    private readonly string _baseDir;
     private readonly string _protectedPath;
     private readonly string _fallbackPath;
 
     public string? LastWarning { get; private set; }
 
-    public ProtectedTokenStore()
+    public string ProtectedPath => _protectedPath;
+    public string FallbackPath => _fallbackPath;
+
+    public ProtectedTokenStore(string? baseDir = null)
     {
-        var baseDir = Path.Combine(
+        _baseDir = baseDir ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "OpenClaw",
             "Companion");
-        Directory.CreateDirectory(baseDir);
+        Directory.CreateDirectory(_baseDir);
 
-        _protectedPath = Path.Combine(baseDir, "token.protected");
-        _fallbackPath = Path.Combine(baseDir, "token.txt");
+        _protectedPath = Path.Combine(_baseDir, "token.protected");
+        _fallbackPath = Path.Combine(_baseDir, "token.txt");
 
         try
         {
-            var keysDir = new DirectoryInfo(Path.Combine(baseDir, "keys"));
+            var keysDir = new DirectoryInfo(Path.Combine(_baseDir, "keys"));
             keysDir.Create();
             var services = new ServiceCollection();
             services.AddDataProtection()
@@ -41,7 +45,7 @@ public sealed class ProtectedTokenStore
         }
     }
 
-    public string? LoadToken()
+    public string? LoadToken(bool allowPlaintextFallback)
     {
         LastWarning = null;
 
@@ -61,11 +65,19 @@ public sealed class ProtectedTokenStore
         if (!File.Exists(_fallbackPath))
             return null;
 
-        LastWarning ??= "Using plaintext companion token fallback storage.";
+        if (!allowPlaintextFallback)
+        {
+            LastWarning ??= "A plaintext companion token exists, but plaintext fallback is disabled.";
+            return null;
+        }
+
+        LastWarning = LastWarning is null
+            ? "Using plaintext companion token fallback storage."
+            : $"{LastWarning} Plaintext fallback was used.";
         return File.ReadAllText(_fallbackPath);
     }
 
-    public bool SaveToken(string token, out string? warning)
+    public bool SaveToken(string token, bool allowPlaintextFallback, out string? warning)
     {
         warning = null;
         Directory.CreateDirectory(Path.GetDirectoryName(_protectedPath)!);
@@ -85,10 +97,22 @@ public sealed class ProtectedTokenStore
         }
         else
         {
-            warning = LastWarning ?? "Secure token storage unavailable; plaintext fallback was used.";
+            warning = LastWarning ?? "Secure token storage unavailable.";
+        }
+
+        if (!allowPlaintextFallback)
+        {
+            TryDelete(_fallbackPath);
+            warning = warning is null
+                ? "Secure token storage is unavailable, so the token was not saved."
+                : $"{warning} Token was not saved because plaintext fallback is disabled.";
+            return false;
         }
 
         File.WriteAllText(_fallbackPath, token);
+        warning = warning is null
+            ? "Using plaintext companion token fallback storage."
+            : $"{warning} Plaintext fallback was used.";
         return false;
     }
 

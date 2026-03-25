@@ -199,6 +199,7 @@ internal static class PipelineExtensions
 
             DisposePluginHostWithTimeout(runtime.PluginHost, pluginDisposeTimeout, app.Logger);
             DisposePluginHostWithTimeout(runtime.NativeDynamicPluginHost, pluginDisposeTimeout, app.Logger);
+            DisposePluginHostWithTimeout(runtime.WhatsAppWorkerHost, pluginDisposeTimeout, app.Logger);
             foreach (var ownerId in runtime.DynamicProviderOwners)
             {
                 runtime.Operations.ProviderRegistry.UnregisterOwnedBy(ownerId);

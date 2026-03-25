@@ -190,4 +190,35 @@ public sealed class WebSocketChannelTests
 
         Assert.Equal(WebSocketState.Closed, ws.State);
     }
+
+    [Fact]
+    public async Task SendAsync_RemoveConnectionWhileSecondSendWaits_DoesNotThrow()
+    {
+        var channel = new WebSocketChannel(new WebSocketConfig());
+        var ws = new TestWebSocket();
+        ws.BlockSendUntilReleased();
+
+        Assert.True(channel.TryAddConnectionForTest("a", ws, IPAddress.Loopback, useJsonEnvelope: false));
+
+        var firstSend = channel.SendAsync(new OutboundMessage
+        {
+            ChannelId = "websocket",
+            RecipientId = "a",
+            Text = "first"
+        }, CancellationToken.None).AsTask();
+
+        await ws.WaitForSendToStartAsync();
+
+        var secondSend = channel.SendAsync(new OutboundMessage
+        {
+            ChannelId = "websocket",
+            RecipientId = "a",
+            Text = "second"
+        }, CancellationToken.None).AsTask();
+
+        channel.RemoveConnectionForTest("a");
+        ws.ReleaseBlockedSend();
+
+        await Task.WhenAll(firstSend, secondSend);
+    }
 }

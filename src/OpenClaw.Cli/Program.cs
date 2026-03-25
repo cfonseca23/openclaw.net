@@ -71,7 +71,7 @@ internal static class Program
 
             Common options:
               --url <url>        Base URL (default: OPENCLAW_BASE_URL or http://127.0.0.1:18789)
-              --token <token>    Auth token (default: OPENCLAW_AUTH_TOKEN)
+              --token <token>    Auth token (deprecated: prefer OPENCLAW_AUTH_TOKEN)
               --model <model>    Model override (optional)
               --system <text>    System prompt (optional)
 
@@ -88,6 +88,7 @@ internal static class Program
 
             Examples:
               openclaw run "summarize this README" --file ./README.md
+              OPENCLAW_AUTH_TOKEN=... openclaw run "summarize this README" --file ./README.md
               cat error.log | openclaw run "what went wrong?"
               openclaw chat --system "Be concise."
               openclaw heartbeat status
@@ -116,7 +117,7 @@ internal static class Program
 
             Notes:
               - The heartbeat commands talk to the gateway admin API.
-              - Use OPENCLAW_BASE_URL / OPENCLAW_AUTH_TOKEN or pass --url / --token.
+              - Prefer OPENCLAW_BASE_URL / OPENCLAW_AUTH_TOKEN over command-line tokens.
             """);
     }
 
@@ -130,7 +131,7 @@ internal static class Program
         }
 
         var baseUrl = parsed.GetOption("--url") ?? Environment.GetEnvironmentVariable(EnvBaseUrl) ?? DefaultBaseUrl;
-        var token = parsed.GetOption("--token") ?? Environment.GetEnvironmentVariable(EnvAuthToken);
+        var token = ResolveAuthToken(parsed, Console.Error);
         var model = parsed.GetOption("--model");
         var system = parsed.GetOption("--system");
 
@@ -189,7 +190,7 @@ internal static class Program
         }
 
         var baseUrl = parsed.GetOption("--url") ?? Environment.GetEnvironmentVariable(EnvBaseUrl) ?? DefaultBaseUrl;
-        var token = parsed.GetOption("--token") ?? Environment.GetEnvironmentVariable(EnvAuthToken);
+        var token = ResolveAuthToken(parsed, Console.Error);
         var model = parsed.GetOption("--model");
         var system = parsed.GetOption("--system");
 
@@ -260,7 +261,7 @@ internal static class Program
         }
 
         var baseUrl = parsed.GetOption("--url") ?? Environment.GetEnvironmentVariable(EnvBaseUrl) ?? DefaultBaseUrl;
-        var token = parsed.GetOption("--token") ?? Environment.GetEnvironmentVariable(EnvAuthToken);
+        var token = ResolveAuthToken(parsed, Console.Error);
 
         using var client = new OpenClawHttpClient(baseUrl, token);
         return subcommand switch
@@ -597,6 +598,18 @@ internal static class Program
         using var reader = new StreamReader(Console.OpenStandardInput());
         var text = await reader.ReadToEndAsync();
         return string.IsNullOrWhiteSpace(text) ? null : text.TrimEnd();
+    }
+
+    internal static string? ResolveAuthToken(CliArgs parsed, TextWriter error)
+    {
+        var cliToken = parsed.GetOption("--token");
+        if (!string.IsNullOrWhiteSpace(cliToken))
+        {
+            error.WriteLine("Warning: --token is deprecated because command-line arguments can be exposed in process listings. Prefer OPENCLAW_AUTH_TOKEN.");
+            return cliToken;
+        }
+
+        return Environment.GetEnvironmentVariable(EnvAuthToken);
     }
 
     private static float? ParseFloat(string? raw)

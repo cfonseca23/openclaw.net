@@ -52,6 +52,8 @@ internal sealed class GatewayAppRuntime
     public TwilioSmsWebhookHandler? TwilioSmsWebhookHandler { get; init; }
     public PluginHost? PluginHost { get; init; }
     public NativeDynamicPluginHost? NativeDynamicPluginHost { get; init; }
+    public FirstPartyWhatsAppWorkerHost? WhatsAppWorkerHost { get; init; }
+    public required ChannelAuthEventStore ChannelAuthEvents { get; init; }
 
     /// <summary>Names of all registered tools (built-in + native plugins + bridge plugins).</summary>
     public required FrozenSet<string> RegisteredToolNames { get; init; }

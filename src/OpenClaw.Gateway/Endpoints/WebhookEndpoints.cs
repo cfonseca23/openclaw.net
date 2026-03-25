@@ -328,8 +328,9 @@ internal static class WebhookEndpoints
                     return;
                 }
 
-                if (body.Length > hookCfg.MaxBodyLength)
-                    body = body[..hookCfg.MaxBodyLength];
+                var bodyForPrompt = body.Length > hookCfg.MaxBodyLength
+                    ? body[..hookCfg.MaxBodyLength]
+                    : body;
 
                 var headerKey = ctx.Request.Headers["Idempotency-Key"].ToString();
                 if (string.IsNullOrWhiteSpace(headerKey))
@@ -361,7 +362,7 @@ internal static class WebhookEndpoints
                     }
                 }
 
-                var prompt = hookCfg.PromptTemplate.Replace("{body}", body);
+                var prompt = hookCfg.PromptTemplate.Replace("{body}", bodyForPrompt);
                 var msg = new InboundMessage
                 {
                     ChannelId = "webhook",
@@ -389,7 +390,7 @@ internal static class WebhookEndpoints
                             ChannelId = "webhook",
                             SessionId = msg.SessionId,
                             Error = ex.Message,
-                            PayloadPreview = body.Length <= 500 ? body : body[..500] + "…"
+                            PayloadPreview = bodyForPrompt.Length <= 500 ? bodyForPrompt : bodyForPrompt[..500] + "…"
                         },
                         ReplayMessage = msg
                     });

@@ -19,6 +19,18 @@ public sealed record InboundMessage
     public string? ApprovalId { get; init; }
     public bool? Approved { get; init; }
     public DateTimeOffset ReceivedAt { get; init; } = DateTimeOffset.UtcNow;
+
+    // Group chat fields
+    public bool IsGroup { get; init; }
+    public string? GroupId { get; init; }
+    public string? GroupName { get; init; }
+    public string[]? MentionedIds { get; init; }
+
+    // Media fields
+    public string? MediaType { get; init; }
+    public string? MediaUrl { get; init; }
+    public string? MediaMimeType { get; init; }
+    public string? MediaFileName { get; init; }
 }
 
 /// <summary>
