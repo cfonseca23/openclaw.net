@@ -4,10 +4,12 @@ public sealed class MultimodalConfig
 {
     public bool Enabled { get; set; } = true;
     public string MediaCachePath { get; set; } = "./memory/media-cache";
+    public string LiveProvider { get; set; } = "gemini";
     public string VisionProvider { get; set; } = "gemini";
     public string VisionModel { get; set; } = "gemini-2.5-flash";
     public TextToSpeechConfig TextToSpeech { get; set; } = new();
     public GeminiLiveConfig GeminiLive { get; set; } = new();
+    public ElevenLabsConfig ElevenLabs { get; set; } = new();
 }
 
 public sealed class TextToSpeechConfig
@@ -16,6 +18,7 @@ public sealed class TextToSpeechConfig
     public string Provider { get; set; } = "gemini";
     public string Model { get; set; } = "gemini-2.5-flash-preview-tts";
     public string VoiceName { get; set; } = "Kore";
+    public string? VoiceId { get; set; }
 }
 
 public sealed class GeminiLiveConfig
@@ -27,6 +30,16 @@ public sealed class GeminiLiveConfig
     public string? VoiceName { get; set; }
     public bool InputTranscription { get; set; } = true;
     public bool OutputTranscription { get; set; } = true;
+}
+
+public sealed class ElevenLabsConfig
+{
+    public bool Enabled { get; set; } = true;
+    public string Endpoint { get; set; } = "https://api.elevenlabs.io";
+    public string? ApiKey { get; set; }
+    public string VoiceId { get; set; } = "JBFqnCBsd6RMkjVDRZzb";
+    public string Model { get; set; } = "eleven_multilingual_v2";
+    public string OutputFormat { get; set; } = "mp3_44100_128";
 }
 
 public sealed class StoredMediaAsset
@@ -41,6 +54,7 @@ public sealed class StoredMediaAsset
 
 public sealed class LiveSessionOpenRequest
 {
+    public string? Provider { get; init; }
     public string? Model { get; init; }
     public string[]? ResponseModalities { get; init; }
     public string? SystemInstruction { get; init; }

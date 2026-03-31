@@ -7,7 +7,7 @@ using OpenClaw.Core.Security;
 
 namespace OpenClaw.Gateway;
 
-internal sealed class GeminiLiveProxyService
+internal sealed class GeminiLiveProxyService : ILiveSessionProvider
 {
     private readonly GatewayConfig _config;
     private readonly ILogger<GeminiLiveProxyService> _logger;
@@ -17,6 +17,8 @@ internal sealed class GeminiLiveProxyService
         _config = config;
         _logger = logger;
     }
+
+    public string Name => "gemini";
 
     public async Task BridgeAsync(
         System.Net.WebSockets.WebSocket clientSocket,
@@ -69,6 +71,7 @@ internal sealed class GeminiLiveProxyService
             {
                 "text" => BuildClientTextPayload(envelope.Text ?? "", envelope.TurnComplete),
                 "audio" => BuildClientAudioPayload(envelope.Base64Data ?? "", envelope.MimeType ?? "audio/pcm;rate=16000", envelope.TurnComplete),
+                "audio_end" => BuildClientAudioEndPayload(),
                 "interrupt" => BuildClientInterruptPayload(),
                 "close" => null,
                 _ => null
@@ -332,6 +335,9 @@ internal sealed class GeminiLiveProxyService
 
     private static string BuildClientInterruptPayload()
         => """{"clientContent":{"turns":[],"turnComplete":false}}""";
+
+    private static string BuildClientAudioEndPayload()
+        => """{"realtimeInput":{"audioStreamEnd":true}}""";
 
     private static async Task SendGeminiMessageAsync(ClientWebSocket socket, string payload, CancellationToken ct)
     {

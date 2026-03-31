@@ -431,6 +431,7 @@ public static class TerminalUi
 
     private static async Task ShowLiveSessionAsync(OpenClawHttpClient client, string? authToken, CancellationToken ct)
     {
+        var provider = AnsiConsole.Ask<string>("Live provider ([grey]blank for default[/])", "gemini");
         var model = AnsiConsole.Ask<string>("Live model ([grey]blank for default[/])");
         var system = AnsiConsole.Ask<string>("System instruction ([grey]blank for none[/])");
         var modalitiesRaw = AnsiConsole.Ask<string>("Response modalities ([grey]TEXT or TEXT,AUDIO[/])", "TEXT");
@@ -482,6 +483,7 @@ public static class TerminalUi
             authToken,
             new LiveSessionOpenRequest
             {
+                Provider = string.IsNullOrWhiteSpace(provider) ? null : provider,
                 Model = string.IsNullOrWhiteSpace(model) ? null : model,
                 SystemInstruction = string.IsNullOrWhiteSpace(system) ? null : system,
                 VoiceName = string.IsNullOrWhiteSpace(voice) ? null : voice,

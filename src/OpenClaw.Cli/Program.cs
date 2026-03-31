@@ -210,7 +210,7 @@ internal static class Program
             openclaw live
 
             Usage:
-              openclaw live [--url <url>] [--token <token>] [--model <id>] [--system <text>] [--voice <name>] [--modality <TEXT|AUDIO>]...
+              openclaw live [--url <url>] [--token <token>] [--provider <id>] [--model <id>] [--system <text>] [--voice <name>] [--modality <TEXT|AUDIO>]...
 
             Notes:
               - Opens a Gemini Live websocket session through the gateway.
@@ -354,6 +354,7 @@ internal static class Program
 
         var baseUrl = parsed.GetOption("--url") ?? Environment.GetEnvironmentVariable(EnvBaseUrl) ?? DefaultBaseUrl;
         var token = ResolveAuthToken(parsed, Console.Error);
+        var provider = parsed.GetOption("--provider");
         var model = parsed.GetOption("--model");
         var system = parsed.GetOption("--system");
         var voice = parsed.GetOption("--voice");
@@ -361,7 +362,7 @@ internal static class Program
             ? values.Select(static item => item.ToUpperInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
             : ["TEXT"];
 
-        await RunLiveConsoleAsync(baseUrl, token, model, system, voice, modalities);
+        await RunLiveConsoleAsync(baseUrl, token, provider, model, system, voice, modalities);
         return 0;
     }
 
@@ -742,6 +743,7 @@ internal static class Program
     private static async Task RunLiveConsoleAsync(
         string baseUrl,
         string? token,
+        string? provider,
         string? model,
         string? system,
         string? voice,
@@ -785,6 +787,7 @@ internal static class Program
             token,
             new LiveSessionOpenRequest
             {
+                Provider = provider,
                 Model = model,
                 SystemInstruction = system,
                 VoiceName = voice,

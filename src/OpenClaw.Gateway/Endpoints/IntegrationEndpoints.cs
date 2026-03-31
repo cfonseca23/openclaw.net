@@ -220,6 +220,50 @@ internal static class IntegrationEndpoints
                 CoreJsonContext.Default.IntegrationProfilesResponse);
         });
 
+        group.MapPost("/text-to-speech", async (HttpContext ctx) =>
+        {
+            var failure = AuthorizeAndConsume(ctx, startup, runtime, browserSessions, endpointScope: "integration_http", requireCsrf: false);
+            if (failure is not null)
+                return failure;
+
+            IntegrationTextToSpeechRequest? request;
+            try
+            {
+                request = await JsonSerializer.DeserializeAsync(
+                    ctx.Request.Body,
+                    CoreJsonContext.Default.IntegrationTextToSpeechRequest,
+                    ctx.RequestAborted);
+            }
+            catch
+            {
+                return Results.Json(
+                    new OperationStatusResponse { Success = false, Error = "Invalid JSON request body." },
+                    CoreJsonContext.Default.OperationStatusResponse,
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            if (request is null || string.IsNullOrWhiteSpace(request.Text))
+            {
+                return Results.Json(
+                    new OperationStatusResponse { Success = false, Error = "text is required." },
+                    CoreJsonContext.Default.OperationStatusResponse,
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            try
+            {
+                var response = await facade.SynthesizeSpeechAsync(request, ctx.RequestAborted);
+                return Results.Json(response, CoreJsonContext.Default.IntegrationTextToSpeechResponse);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Json(
+                    new OperationStatusResponse { Success = false, Error = ex.Message },
+                    CoreJsonContext.Default.OperationStatusResponse,
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+        });
+
         group.MapGet("/tool-presets", (HttpContext ctx) =>
         {
             var failure = AuthorizeAndConsume(ctx, startup, runtime, browserSessions, endpointScope: "integration_http", requireCsrf: false);

@@ -49,6 +49,24 @@ public sealed class IntegrationProfileUpdateRequest
     public required UserProfile Profile { get; init; }
 }
 
+public sealed class IntegrationTextToSpeechRequest
+{
+    public required string Text { get; init; }
+    public string? Provider { get; init; }
+    public string? VoiceName { get; init; }
+    public string? VoiceId { get; init; }
+    public string? Model { get; init; }
+}
+
+public sealed class IntegrationTextToSpeechResponse
+{
+    public required string Provider { get; init; }
+    public required string AssetId { get; init; }
+    public required string MediaType { get; init; }
+    public required string DataUrl { get; init; }
+    public string? Marker { get; init; }
+}
+
 public sealed class AutomationRunRequest
 {
     public bool DryRun { get; init; }

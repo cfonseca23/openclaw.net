@@ -46,6 +46,13 @@ internal static class CoreServicesExtensions
         services.AddSingleton(sp => new MediaCacheStore(config.Multimodal.MediaCachePath));
         services.AddSingleton<GeminiMultimodalService>();
         services.AddSingleton<GeminiLiveProxyService>();
+        services.AddSingleton<ILiveSessionProvider>(sp => sp.GetRequiredService<GeminiLiveProxyService>());
+        services.AddSingleton<GeminiTextToSpeechProvider>();
+        services.AddSingleton<ITextToSpeechProvider>(sp => sp.GetRequiredService<GeminiTextToSpeechProvider>());
+        services.AddSingleton<ElevenLabsTextToSpeechProvider>();
+        services.AddSingleton<ITextToSpeechProvider>(sp => sp.GetRequiredService<ElevenLabsTextToSpeechProvider>());
+        services.AddSingleton<TextToSpeechService>();
+        services.AddSingleton<LiveSessionService>();
         services.AddSingleton<ToolPresetResolver>();
         services.AddSingleton<IToolPresetResolver>(sp => sp.GetRequiredService<ToolPresetResolver>());
         services.AddSingleton(sp =>

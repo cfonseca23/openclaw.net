@@ -51,7 +51,7 @@ internal sealed class GeminiMultimodalService
         return ExtractText(payload) ?? "No vision response was returned.";
     }
 
-    public async Task<(StoredMediaAsset Asset, string Marker)> SynthesizeSpeechAsync(
+    public async Task<TextToSpeechSynthesisResult> SynthesizeSpeechAsync(
         string text,
         string? voiceName,
         string? model,
@@ -70,9 +70,16 @@ internal sealed class GeminiMultimodalService
         var (audioBytes, mimeType) = ExtractInlineData(payload)
             ?? throw new InvalidOperationException("Gemini did not return audio data.");
 
+        var base64 = Convert.ToBase64String(audioBytes.ToArray());
+        var dataUrl = $"data:{mimeType};base64,{base64}";
         var asset = await _mediaCache.SaveAsync(audioBytes, mimeType, "speech.wav", ct);
-        var marker = $"[AUDIO_URL:data:{mimeType};base64,{Convert.ToBase64String(audioBytes.ToArray())}]";
-        return (asset, marker);
+        return new TextToSpeechSynthesisResult
+        {
+            Provider = "gemini",
+            Asset = asset,
+            Marker = $"[AUDIO_URL:{dataUrl}]",
+            DataUrl = dataUrl
+        };
     }
 
     private Uri BuildGenerateContentUri(string model)

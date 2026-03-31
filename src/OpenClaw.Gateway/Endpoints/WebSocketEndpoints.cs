@@ -33,7 +33,7 @@ internal static class WebSocketEndpoints
             try
             {
                 var openRequest = await ReceiveLiveOpenRequestAsync(ws, ctx.RequestAborted);
-                await ctx.RequestServices.GetRequiredService<GeminiLiveProxyService>()
+                await ctx.RequestServices.GetRequiredService<LiveSessionService>()
                     .BridgeAsync(ws, openRequest, ctx.RequestAborted);
             }
             catch (OperationCanceledException) when (ctx.RequestAborted.IsCancellationRequested)

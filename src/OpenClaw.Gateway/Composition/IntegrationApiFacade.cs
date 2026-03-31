@@ -15,6 +15,7 @@ internal sealed class IntegrationApiFacade
     private readonly GatewayAutomationService _automationService;
     private readonly LearningService _learningService;
     private readonly IToolPresetResolver? _toolPresetResolver;
+    private readonly TextToSpeechService? _textToSpeechService;
 
     public static IntegrationApiFacade Create(
         GatewayStartupContext startup,
@@ -31,6 +32,7 @@ internal sealed class IntegrationApiFacade
         var automationService = FeatureFallbackServices.ResolveAutomationService(startup, services, heartbeat, fallbackFeatureStore);
         var learningService = FeatureFallbackServices.ResolveLearningService(startup, services, fallbackFeatureStore);
         var toolPresetResolver = services.GetService<IToolPresetResolver>();
+        var textToSpeechService = services.GetService<TextToSpeechService>();
 
         return new IntegrationApiFacade(
             startup,
@@ -40,7 +42,8 @@ internal sealed class IntegrationApiFacade
             profileStore,
             automationService,
             learningService,
-            toolPresetResolver);
+            toolPresetResolver,
+            textToSpeechService);
     }
 
     public IntegrationApiFacade(
@@ -51,7 +54,8 @@ internal sealed class IntegrationApiFacade
         IUserProfileStore profileStore,
         GatewayAutomationService automationService,
         LearningService learningService,
-        IToolPresetResolver? toolPresetResolver)
+        IToolPresetResolver? toolPresetResolver,
+        TextToSpeechService? textToSpeechService)
     {
         _startup = startup;
         _runtime = runtime;
@@ -61,6 +65,7 @@ internal sealed class IntegrationApiFacade
         _automationService = automationService;
         _learningService = learningService;
         _toolPresetResolver = toolPresetResolver;
+        _textToSpeechService = textToSpeechService;
     }
 
     public IntegrationStatusResponse BuildStatusResponse()
@@ -218,6 +223,32 @@ internal sealed class IntegrationApiFacade
         {
             Items = await _profileStore.ListProfilesAsync(cancellationToken)
         };
+
+    public async Task<IntegrationTextToSpeechResponse> SynthesizeSpeechAsync(IntegrationTextToSpeechRequest request, CancellationToken cancellationToken)
+    {
+        if (_textToSpeechService is null)
+            throw new InvalidOperationException("Text-to-speech is not available in this runtime.");
+
+        var result = await _textToSpeechService.SynthesizeSpeechAsync(
+            new TextToSpeechRequest
+            {
+                Text = request.Text,
+                Provider = request.Provider,
+                VoiceId = request.VoiceId,
+                VoiceName = request.VoiceName,
+                Model = request.Model
+            },
+            cancellationToken);
+
+        return new IntegrationTextToSpeechResponse
+        {
+            Provider = result.Provider,
+            AssetId = result.Asset.Id,
+            MediaType = result.Asset.MediaType,
+            DataUrl = result.DataUrl,
+            Marker = result.Marker
+        };
+    }
 
     public async Task<IntegrationProfileResponse> GetProfileAsync(string actorId, CancellationToken cancellationToken)
         => new()

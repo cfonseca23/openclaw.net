@@ -139,7 +139,15 @@
         }
 
         #token-input,
-        #doctor-button {
+        #doctor-button,
+        #mode-select,
+        #live-provider-select,
+        #speech-provider-select,
+        #voice-id-input,
+        #live-connect-button,
+        #live-mic-button,
+        #live-interrupt-button,
+        .live-status-badge {
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--border);
             color: var(--text);
@@ -150,18 +158,73 @@
             transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
 
-        #token-input {
+        #token-input,
+        #voice-id-input {
             width: 240px;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.9rem;
         }
 
         #token-input:focus,
-        #doctor-button:hover {
+        #voice-id-input:focus,
+        #doctor-button:hover,
+        #mode-select:hover,
+        #live-provider-select:hover,
+        #speech-provider-select:hover,
+        #live-connect-button:hover,
+        #live-mic-button:hover,
+        #live-interrupt-button:hover,
+        .live-status-badge:hover {
             outline: none;
             border-color: rgba(168, 85, 247, 0.5);
             background: rgba(255, 255, 255, 0.08);
             box-shadow: 0 0 15px rgba(168, 85, 247, 0.15);
+        }
+
+        #mode-select,
+        #live-provider-select,
+        #speech-provider-select {
+            width: auto;
+            min-width: 120px;
+        }
+
+        #live-connect-button,
+        #live-mic-button,
+        #live-interrupt-button {
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        #live-mic-button.active {
+            border-color: rgba(20, 184, 166, 0.5);
+            color: #ccfbf1;
+            box-shadow: 0 0 15px rgba(20, 184, 166, 0.2);
+        }
+
+        .live-status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-secondary);
+            padding-inline: 0.95rem;
+        }
+
+        .live-status-badge::before {
+            content: '';
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #71717a;
+        }
+
+        .live-status-badge.online {
+            color: #ccfbf1;
+            border-color: rgba(20, 184, 166, 0.4);
+        }
+
+        .live-status-badge.online::before {
+            background: var(--secondary);
+            box-shadow: 0 0 10px rgba(20, 184, 166, 0.7);
         }
 
         #remember-token-wrap {
@@ -492,10 +555,24 @@
             z-index: 10;
         }
 
-        #input-container {
+        #composer-shell {
             width: 100%;
             max-width: 900px;
             padding: 0 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.9rem;
+        }
+
+        #live-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        #input-container {
+            width: 100%;
             display: flex;
             gap: 1rem;
             align-items: flex-end;
@@ -600,6 +677,10 @@
                 gap: 1rem;
             }
 
+            #composer-shell {
+                padding: 0 1rem;
+            }
+
             #header h2 {
                 font-size: 1.4rem;
             }
@@ -626,6 +707,10 @@
         </div>
         <div class="header-right">
             <button id="doctor-button" title="Fetch /doctor/text">Doctor</button>
+            <select id="mode-select" title="Composer mode">
+                <option value="chat">Chat</option>
+                <option value="live">Live</option>
+            </select>
             <input type="password" id="token-input" placeholder="Auth Token (optional)">
             <label id="remember-token-wrap" title="Persist token in this browser">
                 <input type="checkbox" id="remember-token">
@@ -649,15 +734,32 @@
     </div>
 
     <div id="input-wrapper">
-        <div id="input-container">
-            <textarea id="message-input" rows="1" placeholder="Message OpenClaw.NET..." disabled></textarea>
-            <button id="send-button" disabled title="Send Message">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13"></line>
-                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                </svg>
-            </button>
+        <div id="composer-shell">
+            <div id="live-toolbar">
+                <span id="live-status-badge" class="live-status-badge">Live offline</span>
+                <select id="live-provider-select" title="Live provider">
+                    <option value="gemini">Gemini Live</option>
+                </select>
+                <select id="speech-provider-select" title="Speech output">
+                    <option value="live-native">Live native audio</option>
+                    <option value="gemini">Gemini TTS</option>
+                    <option value="elevenlabs">ElevenLabs TTS</option>
+                </select>
+                <input id="voice-id-input" placeholder="Voice ID (optional)" title="Provider voice id override">
+                <button id="live-connect-button" type="button" title="Connect live session">Start Live</button>
+                <button id="live-mic-button" type="button" title="Toggle microphone streaming" disabled>Mic</button>
+                <button id="live-interrupt-button" type="button" title="Interrupt live generation" disabled>Interrupt</button>
+            </div>
+            <div id="input-container">
+                <textarea id="message-input" rows="1" placeholder="Message OpenClaw.NET..." disabled></textarea>
+                <button id="send-button" disabled title="Send Message">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -683,16 +785,32 @@
         const tokenInput = document.getElementById('token-input');
         const rememberToken = document.getElementById('remember-token');
         const doctorButton = document.getElementById('doctor-button');
+        const modeSelect = document.getElementById('mode-select');
+        const liveProviderSelect = document.getElementById('live-provider-select');
+        const speechProviderSelect = document.getElementById('speech-provider-select');
+        const voiceIdInput = document.getElementById('voice-id-input');
+        const liveConnectButton = document.getElementById('live-connect-button');
+        const liveMicButton = document.getElementById('live-mic-button');
+        const liveInterruptButton = document.getElementById('live-interrupt-button');
+        const liveStatusBadge = document.getElementById('live-status-badge');
         const typingRow = document.getElementById('typing-row');
         const TOKEN_KEY_PERSIST = 'openclaw_token';
         const TOKEN_KEY_SESSION = 'openclaw_token_session';
 
         let ws = null;
+        let liveWs = null;
         let activeResponseDiv = null;
         let activeRawContent = "";
         let reconnectAttempts = 0;
         let reconnectTimer = null;
         let streamRenderTimer = null;
+        let liveResponseHasAudio = false;
+        let liveAudioQueue = [];
+        let liveAudioPlaying = false;
+        let liveMediaStream = null;
+        let liveAudioContext = null;
+        let liveAudioSource = null;
+        let liveAudioProcessor = null;
 
         const WEBCHAT_CONFIG = {
             streamRenderDebounceMs: Math.max(20, Number(window.OPENCLAW_WEBCHAT_CONFIG?.streamRenderDebounceMs ?? 120)),
@@ -721,6 +839,13 @@
             }
         }
 
+        function sanitizeRenderedHtml(html) {
+            return DOMPurify.sanitize(html, {
+                ADD_TAGS: ['audio', 'source'],
+                ADD_ATTR: ['controls', 'src', 'type', 'preload']
+            });
+        }
+
         function preprocessMediaMarkers(raw) {
             const lines = (raw || "").split('\n');
             const out = [];
@@ -738,6 +863,12 @@
                     out.push(`[file](${url})`);
                     continue;
                 }
+                const mAudioUrl = trimmed.match(/^\[AUDIO_URL:(.+)\]$/);
+                if (mAudioUrl) {
+                    const url = mAudioUrl[1].trim();
+                    out.push(`<audio controls preload="metadata" src="${url}"></audio>`);
+                    continue;
+                }
                 out.push(line);
             }
             return out.join('\n');
@@ -747,7 +878,7 @@
             const row = createRow('assistant');
             const div = document.createElement('div');
             div.className = 'message assistant';
-            div.innerHTML = DOMPurify.sanitize(marked.parse(preprocessMediaMarkers(md)));
+            div.innerHTML = sanitizeRenderedHtml(marked.parse(preprocessMediaMarkers(md)));
             row.appendChild(div);
             chatContainer.insertBefore(row, typingRow);
             scrollToBottom();
@@ -765,7 +896,7 @@
                 return;
             }
 
-            activeResponseDiv.innerHTML = DOMPurify.sanitize(marked.parse(preprocessMediaMarkers(activeRawContent)));
+            activeResponseDiv.innerHTML = sanitizeRenderedHtml(marked.parse(preprocessMediaMarkers(activeRawContent)));
 
             if (finalRender) {
                 activeResponseDiv.querySelectorAll('pre code').forEach((block) => {
@@ -878,6 +1009,304 @@
             scrollToBottom();
         }
 
+        function isLiveMode() {
+            return modeSelect.value === 'live';
+        }
+
+        function isLiveConnected() {
+            return liveWs && liveWs.readyState === WebSocket.OPEN;
+        }
+
+        function updateComposerAvailability() {
+            const chatReady = ws && ws.readyState === WebSocket.OPEN;
+            const liveReady = isLiveConnected();
+            const canSend = isLiveMode() ? liveReady : chatReady;
+            messageInput.disabled = !canSend;
+            sendButton.disabled = !canSend;
+            liveMicButton.disabled = !liveReady;
+            liveInterruptButton.disabled = !liveReady;
+            liveConnectButton.textContent = liveReady ? 'Stop Live' : 'Start Live';
+            liveStatusBadge.textContent = liveReady ? `Live online (${liveProviderSelect.value})` : 'Live offline';
+            liveStatusBadge.classList.toggle('online', liveReady);
+        }
+
+        function buildLiveWsUrl() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const token = getCurrentToken();
+            const query = token ? `?token=${encodeURIComponent(token)}` : '';
+            return `${protocol}//${window.location.host}/ws/live${query}`;
+        }
+
+        function createAudioBlobFromBase64(base64Data, mimeType) {
+            const binary = atob(base64Data);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+
+            if ((mimeType || '').includes('audio/pcm')) {
+                const rateMatch = /rate=(\d+)/i.exec(mimeType || '');
+                const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
+                return createWavBlob(bytes, sampleRate);
+            }
+
+            return new Blob([bytes], { type: mimeType || 'audio/mpeg' });
+        }
+
+        function createWavBlob(pcmBytes, sampleRate) {
+            const header = new ArrayBuffer(44);
+            const view = new DataView(header);
+            const byteRate = sampleRate * 2;
+            const blockAlign = 2;
+            writeAscii(view, 0, 'RIFF');
+            view.setUint32(4, 36 + pcmBytes.length, true);
+            writeAscii(view, 8, 'WAVE');
+            writeAscii(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, byteRate, true);
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, 16, true);
+            writeAscii(view, 36, 'data');
+            view.setUint32(40, pcmBytes.length, true);
+            return new Blob([header, pcmBytes], { type: 'audio/wav' });
+        }
+
+        function writeAscii(view, offset, text) {
+            for (let i = 0; i < text.length; i++) {
+                view.setUint8(offset + i, text.charCodeAt(i));
+            }
+        }
+
+        function enqueueLiveAudio(base64Data, mimeType) {
+            const blob = createAudioBlobFromBase64(base64Data, mimeType);
+            const url = URL.createObjectURL(blob);
+            liveAudioQueue.push(url);
+            if (!liveAudioPlaying) {
+                playNextLiveAudio();
+            }
+        }
+
+        function playNextLiveAudio() {
+            if (liveAudioQueue.length === 0) {
+                liveAudioPlaying = false;
+                return;
+            }
+
+            liveAudioPlaying = true;
+            const nextUrl = liveAudioQueue.shift();
+            const audio = new Audio(nextUrl);
+            audio.onended = () => {
+                URL.revokeObjectURL(nextUrl);
+                playNextLiveAudio();
+            };
+            audio.onerror = () => {
+                URL.revokeObjectURL(nextUrl);
+                playNextLiveAudio();
+            };
+            audio.play().catch(() => {
+                URL.revokeObjectURL(nextUrl);
+                playNextLiveAudio();
+            });
+        }
+
+        async function speakText(text) {
+            const provider = speechProviderSelect.value;
+            if (provider === 'live-native' || !text.trim()) {
+                return;
+            }
+
+            const token = getCurrentToken();
+            const headers = { 'Content-Type': 'application/json' };
+            if (token && token !== 'bypass') {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+
+            const resp = await fetch('/api/integration/text-to-speech', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    text,
+                    provider,
+                    voiceId: voiceIdInput.value.trim() || null
+                })
+            });
+
+            if (!resp.ok) {
+                const payload = await resp.json().catch(() => null);
+                throw new Error(payload?.error || `Speech synthesis failed (${resp.status}).`);
+            }
+
+            const result = await resp.json();
+            enqueueLiveAudio((result.dataUrl || '').split(',')[1] || '', result.mediaType || 'audio/mpeg');
+        }
+
+        async function connectLive() {
+            if (isLiveConnected()) {
+                disconnectLive();
+                return;
+            }
+
+            persistToken(tokenInput.value.trim());
+            const responseModalities = speechProviderSelect.value === 'live-native' ? ['TEXT', 'AUDIO'] : ['TEXT'];
+            liveWs = new WebSocket(buildLiveWsUrl());
+
+            liveWs.onopen = () => {
+                liveWs.send(JSON.stringify({
+                    provider: liveProviderSelect.value,
+                    responseModalities,
+                    voiceName: voiceIdInput.value.trim() || null
+                }));
+                appendSystem(`Live session connecting via ${liveProviderSelect.value}...`);
+                updateComposerAvailability();
+                messageInput.focus();
+            };
+
+            liveWs.onmessage = async (event) => {
+                const env = JSON.parse(event.data);
+                switch (env.type) {
+                    case 'opened':
+                        appendSystem(`Live session opened: ${env.text || liveProviderSelect.value}`);
+                        break;
+                    case 'text':
+                        typingRow.style.display = 'flex';
+                        if (!activeResponseDiv) {
+                            const row = createRow('assistant');
+                            activeResponseDiv = document.createElement('div');
+                            activeResponseDiv.className = 'message assistant';
+                            row.appendChild(activeResponseDiv);
+                            chatContainer.insertBefore(row, typingRow);
+                        }
+                        activeRawContent += env.text || '';
+                        scheduleActiveResponseRender(false);
+                        break;
+                    case 'audio':
+                        liveResponseHasAudio = true;
+                        if (speechProviderSelect.value === 'live-native' && env.base64Data) {
+                            enqueueLiveAudio(env.base64Data, env.mimeType || 'audio/wav');
+                        }
+                        break;
+                    case 'input_transcription':
+                        appendSystem(`You said: ${env.text || ''}`);
+                        break;
+                    case 'output_transcription':
+                        appendSystem(`Live transcript: ${env.text || ''}`);
+                        break;
+                    case 'turn_complete': {
+                        typingRow.style.display = 'none';
+                        scheduleActiveResponseRender(true);
+                        const completedText = activeRawContent;
+                        activeResponseDiv = null;
+                        activeRawContent = '';
+                        if (!liveResponseHasAudio && speechProviderSelect.value !== 'live-native') {
+                            try {
+                                await speakText(completedText);
+                            } catch (error) {
+                                appendSystem(error.message || 'Speech synthesis failed.', true);
+                            }
+                        }
+                        liveResponseHasAudio = false;
+                        break;
+                    }
+                    case 'interrupted':
+                        appendSystem('Live generation interrupted.');
+                        break;
+                    case 'error':
+                        appendSystem(env.error || env.text || 'Live session error.', true);
+                        break;
+                }
+                scrollToBottom();
+            };
+
+            liveWs.onclose = () => {
+                stopLiveMicCapture(false);
+                liveWs = null;
+                updateComposerAvailability();
+            };
+
+            liveWs.onerror = () => appendSystem('Live websocket encountered an error.', true);
+        }
+
+        function disconnectLive() {
+            stopLiveMicCapture(false);
+            if (liveWs) {
+                try {
+                    liveWs.send(JSON.stringify({ type: 'close' }));
+                } catch (_) { }
+                liveWs.close();
+                liveWs = null;
+            }
+            updateComposerAvailability();
+        }
+
+        async function startLiveMicCapture() {
+            if (!isLiveConnected()) {
+                appendSystem('Connect a live session before enabling the microphone.', true);
+                return;
+            }
+
+            liveMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            liveAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            liveAudioSource = liveAudioContext.createMediaStreamSource(liveMediaStream);
+            liveAudioProcessor = liveAudioContext.createScriptProcessor(4096, 1, 1);
+            liveAudioProcessor.onaudioprocess = (event) => {
+                if (!isLiveConnected()) return;
+                const samples = event.inputBuffer.getChannelData(0);
+                const pcm = new Int16Array(samples.length);
+                for (let i = 0; i < samples.length; i++) {
+                    const value = Math.max(-1, Math.min(1, samples[i]));
+                    pcm[i] = value < 0 ? value * 0x8000 : value * 0x7fff;
+                }
+                const bytes = new Uint8Array(pcm.buffer);
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                liveWs.send(JSON.stringify({
+                    type: 'audio',
+                    base64Data: btoa(binary),
+                    mimeType: 'audio/pcm;rate=16000',
+                    turnComplete: false
+                }));
+            };
+            liveAudioSource.connect(liveAudioProcessor);
+            liveAudioProcessor.connect(liveAudioContext.destination);
+            liveMicButton.classList.add('active');
+            liveMicButton.textContent = 'Stop Mic';
+            appendSystem('Live microphone streaming started.');
+        }
+
+        function stopLiveMicCapture(sendAudioEnd = true) {
+            if (sendAudioEnd && isLiveConnected()) {
+                try {
+                    liveWs.send(JSON.stringify({ type: 'audio_end' }));
+                } catch (_) { }
+            }
+
+            if (liveAudioProcessor) {
+                liveAudioProcessor.disconnect();
+                liveAudioProcessor.onaudioprocess = null;
+                liveAudioProcessor = null;
+            }
+            if (liveAudioSource) {
+                liveAudioSource.disconnect();
+                liveAudioSource = null;
+            }
+            if (liveAudioContext) {
+                liveAudioContext.close().catch(() => { });
+                liveAudioContext = null;
+            }
+            if (liveMediaStream) {
+                liveMediaStream.getTracks().forEach(track => track.stop());
+                liveMediaStream = null;
+            }
+
+            liveMicButton.classList.remove('active');
+            liveMicButton.textContent = 'Mic';
+        }
+
         function connect() {
             appendSystem('Connecting to OpenClaw.NET Gateway...');
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -898,8 +1327,7 @@
                     reconnectTimer = null;
                 }
                 appendSystem('Connected successfully.');
-                messageInput.disabled = false;
-                sendButton.disabled = false;
+                updateComposerAvailability();
                 messageInput.focus();
             };
 
@@ -984,8 +1412,7 @@
             };
 
             ws.onclose = (event) => {
-                messageInput.disabled = true;
-                sendButton.disabled = true;
+                updateComposerAvailability();
                 typingRow.style.display = 'none';
 
                 if (streamRenderTimer) {
@@ -1023,7 +1450,15 @@
 
         function sendMessage() {
             const text = messageInput.value.trim();
-            if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+            if (!text) return;
+            if (isLiveMode()) {
+                if (!isLiveConnected()) {
+                    appendSystem('Start a live session before sending live messages.', true);
+                    return;
+                }
+            } else if (!ws || ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
 
             const row = createRow('user');
             const div = document.createElement('div');
@@ -1033,10 +1468,19 @@
 
             chatContainer.insertBefore(row, typingRow);
 
-            ws.send(JSON.stringify({
-                type: "user_message",
-                text: text
-            }));
+            if (isLiveMode()) {
+                liveWs.send(JSON.stringify({
+                    type: "text",
+                    text: text,
+                    turnComplete: true
+                }));
+                typingRow.style.display = 'flex';
+            } else {
+                ws.send(JSON.stringify({
+                    type: "user_message",
+                    text: text
+                }));
+            }
 
             messageInput.value = '';
             messageInput.style.height = 'auto';
@@ -1071,6 +1515,25 @@
         });
 
         sendButton.addEventListener('click', sendMessage);
+        modeSelect.addEventListener('change', updateComposerAvailability);
+        liveConnectButton.addEventListener('click', connectLive);
+        liveInterruptButton.addEventListener('click', () => {
+            if (isLiveConnected()) {
+                liveWs.send(JSON.stringify({ type: 'interrupt' }));
+            }
+        });
+        liveMicButton.addEventListener('click', async () => {
+            if (liveMediaStream) {
+                stopLiveMicCapture(true);
+            } else {
+                try {
+                    await startLiveMicCapture();
+                } catch (error) {
+                    appendSystem(error.message || 'Unable to access the microphone.', true);
+                    stopLiveMicCapture(false);
+                }
+            }
+        });
 
         const sessionToken = sessionStorage.getItem(TOKEN_KEY_SESSION);
         const persistedToken = localStorage.getItem(TOKEN_KEY_PERSIST);
@@ -1110,6 +1573,7 @@
         });
 
         connect();
+        updateComposerAvailability();
     </script>
 </body>
 

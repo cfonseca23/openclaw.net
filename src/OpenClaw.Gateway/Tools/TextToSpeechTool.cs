@@ -5,20 +5,22 @@ namespace OpenClaw.Gateway.Tools;
 
 internal sealed class TextToSpeechTool : ITool
 {
-    private readonly GeminiMultimodalService _gemini;
+    private readonly TextToSpeechService _speech;
 
-    public TextToSpeechTool(GeminiMultimodalService gemini)
+    public TextToSpeechTool(TextToSpeechService speech)
     {
-        _gemini = gemini;
+        _speech = speech;
     }
 
     public string Name => "text_to_speech";
-    public string Description => "Generate speech audio from text using the native Gemini text-to-speech path.";
+    public string Description => "Generate speech audio from text using the configured native text-to-speech provider.";
     public string ParameterSchema => """
     {
       "type":"object",
       "properties":{
         "text":{"type":"string"},
+        "provider":{"type":"string"},
+        "voice_id":{"type":"string"},
         "voice_name":{"type":"string"},
         "model":{"type":"string"}
       },
@@ -34,13 +36,18 @@ internal sealed class TextToSpeechTool : ITool
         if (string.IsNullOrWhiteSpace(text))
             return "Error: text is required.";
 
-        var (asset, marker) = await _gemini.SynthesizeSpeechAsync(
-            text,
-            GetString(root, "voice_name"),
-            GetString(root, "model"),
+        var result = await _speech.SynthesizeSpeechAsync(
+            new TextToSpeechRequest
+            {
+                Text = text,
+                Provider = GetString(root, "provider"),
+                VoiceId = GetString(root, "voice_id"),
+                VoiceName = GetString(root, "voice_name"),
+                Model = GetString(root, "model")
+            },
             ct);
 
-        return $"asset_id: {asset.Id}\nmedia_type: {asset.MediaType}\n{marker}";
+        return $"provider: {result.Provider}\nasset_id: {result.Asset.Id}\nmedia_type: {result.Asset.MediaType}\n{result.Marker}";
     }
 
     private static string? GetString(JsonElement root, string propertyName)

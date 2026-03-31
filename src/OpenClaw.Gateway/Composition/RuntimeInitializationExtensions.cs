@@ -187,6 +187,8 @@ internal static class RuntimeInitializationExtensions
             UserProfileStore = app.Services.GetRequiredService<IUserProfileStore>(),
             ProcessService = app.Services.GetRequiredService<ExecutionProcessService>(),
             GeminiMultimodalService = app.Services.GetRequiredService<GeminiMultimodalService>(),
+            TextToSpeechService = app.Services.GetRequiredService<TextToSpeechService>(),
+            LiveSessionService = app.Services.GetRequiredService<LiveSessionService>(),
             CronJobSource = app.Services.GetRequiredService<ICronJobSource>(),
             ContractGovernance = app.Services.GetRequiredService<ContractGovernanceService>(),
             ToolSandbox = app.Services.GetService<IToolSandbox>(),
@@ -450,7 +452,7 @@ internal static class RuntimeInitializationExtensions
             new TodoTool(services.SessionMetadataStore),
             new AutomationTool(services.AutomationService, services.Pipeline),
             new VisionAnalyzeTool(services.GeminiMultimodalService),
-            new TextToSpeechTool(services.GeminiMultimodalService)
+            new TextToSpeechTool(services.TextToSpeechService)
         };
 
         if (config.Tooling.EnableBrowserTool)
@@ -965,6 +967,8 @@ internal static class RuntimeInitializationExtensions
         public required IUserProfileStore UserProfileStore { get; init; }
         public required ExecutionProcessService ProcessService { get; init; }
         public required GeminiMultimodalService GeminiMultimodalService { get; init; }
+        public required TextToSpeechService TextToSpeechService { get; init; }
+        public required LiveSessionService LiveSessionService { get; init; }
         public required ICronJobSource CronJobSource { get; init; }
         public required ContractGovernanceService ContractGovernance { get; init; }
         public IToolSandbox? ToolSandbox { get; init; }
