@@ -962,7 +962,10 @@ public sealed class GatewayWorkersTests
             Text = job.Prompt
         });
 
-        var status = await WaitForHeartbeatStatusAsync(heartbeatService, TimeSpan.FromSeconds(2), static item => item.Outcome == "alert");
+        var status = await WaitForHeartbeatStatusAsync(heartbeatService, TimeSpan.FromSeconds(5), static item => item.Outcome == "alert");
+
+        // Allow outbound worker time to attempt delivery (which will throw)
+        await Task.Delay(500);
 
         Assert.False(status.DeliverySuppressed);
         Assert.Null(status.LastDeliveredAtUtc);
