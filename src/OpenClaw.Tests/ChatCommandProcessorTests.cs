@@ -32,4 +32,31 @@ public sealed class ChatCommandProcessorTests
         Assert.Equal(DynamicCommandRegistrationResult.Registered, first);
         Assert.Equal(DynamicCommandRegistrationResult.Duplicate, duplicate);
     }
+
+    [Fact]
+    public async Task Compact_Command_ReportsRemainingTurns()
+    {
+        var store = new FileMemoryStore(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "openclaw-command-tests", Guid.NewGuid().ToString("N")), 4);
+        var processor = new ChatCommandProcessor(new SessionManager(store, new GatewayConfig(), NullLogger.Instance));
+        processor.SetCompactCallback(static (_, _) => Task.FromResult(6));
+
+        var session = new Session
+        {
+            Id = "sess-compact",
+            ChannelId = "websocket",
+            SenderId = "user1"
+        };
+        session.History.AddRange(
+        [
+            new ChatTurn { Role = "user", Content = "u1" },
+            new ChatTurn { Role = "assistant", Content = "a1" },
+            new ChatTurn { Role = "user", Content = "u2" },
+            new ChatTurn { Role = "assistant", Content = "a2" }
+        ]);
+
+        var (handled, response) = await processor.TryProcessCommandAsync(session, "/compact", CancellationToken.None);
+
+        Assert.True(handled);
+        Assert.Equal("Compacted: 4 turns → 6 turns remaining.", response);
+    }
 }

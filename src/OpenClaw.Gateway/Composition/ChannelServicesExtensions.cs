@@ -53,6 +53,32 @@ internal static class ChannelServicesExtensions
                     sp.GetRequiredService<ILogger<TeamsChannel>>()));
         }
 
+        if (config.Channels.Slack.Enabled)
+        {
+            services.AddSingleton(config.Channels.Slack);
+            services.AddSingleton<SlackWebhookHandler>(sp =>
+                new SlackWebhookHandler(
+                    config.Channels.Slack,
+                    sp.GetRequiredService<OpenClaw.Core.Security.AllowlistManager>(),
+                    sp.GetRequiredService<OpenClaw.Core.Pipeline.RecentSendersStore>(),
+                    sp.GetRequiredService<OpenClaw.Core.Security.AllowlistSemantics>(),
+                    sp.GetRequiredService<ILogger<SlackWebhookHandler>>()));
+            services.AddSingleton<SlackChannel>();
+        }
+
+        if (config.Channels.Discord.Enabled)
+        {
+            services.AddSingleton(config.Channels.Discord);
+            services.AddSingleton<DiscordWebhookHandler>();
+            services.AddSingleton<DiscordChannel>();
+        }
+
+        if (config.Channels.Signal.Enabled)
+        {
+            services.AddSingleton(config.Channels.Signal);
+            services.AddSingleton<SignalChannel>();
+        }
+
         return services;
     }
 }

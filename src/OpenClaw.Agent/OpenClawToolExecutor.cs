@@ -80,12 +80,9 @@ public sealed class OpenClawToolExecutor
 
     public IList<AITool> GetToolDeclarations(Session session)
     {
-        if (_toolPresetResolver is null)
-            return _toolDeclarations;
-
-        var preset = _toolPresetResolver.Resolve(session, _toolsByName.Keys);
+        var preset = _toolPresetResolver?.Resolve(session, _toolsByName.Keys);
         return _toolDeclarations
-            .Where(item => preset.AllowedTools.Contains(item.Name))
+            .Where(item => IsToolAllowedForSession(session, item.Name, preset))
             .ToArray();
     }
 
@@ -140,9 +137,11 @@ public sealed class OpenClawToolExecutor
         }
 
         var preset = _toolPresetResolver?.Resolve(session, _toolsByName.Keys);
-        if (preset is not null && !preset.AllowedTools.Contains(tool.Name))
+        if (!IsToolAllowedForSession(session, tool.Name, preset))
         {
-            var deniedByPreset = $"Tool '{tool.Name}' is not allowed for preset '{preset.PresetId}'.";
+            var deniedByPreset = preset is not null
+                ? $"Tool '{tool.Name}' is not allowed for preset '{preset.PresetId}'."
+                : $"Tool '{tool.Name}' is not allowed for this session.";
             _logger?.LogInformation("[{CorrelationId}] {Message}", turnCtx.CorrelationId, deniedByPreset);
             return CreateImmediateResult(toolName, argsJson, deniedByPreset);
         }
@@ -306,6 +305,17 @@ public sealed class OpenClawToolExecutor
             Invocation = invocation,
             ResultText = result
         };
+    }
+
+    private static bool IsToolAllowedForSession(Session session, string toolName, ResolvedToolPreset? preset)
+    {
+        if (preset is not null && !preset.AllowedTools.Contains(toolName))
+            return false;
+
+        if (session.RouteAllowedTools is { Length: > 0 })
+            return session.RouteAllowedTools.Contains(toolName, StringComparer.OrdinalIgnoreCase);
+
+        return true;
     }
 
     private async Task<string> ExecuteStreamingToolCollectAsync(

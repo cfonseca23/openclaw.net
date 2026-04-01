@@ -155,6 +155,30 @@ public class FeatureParityTests
     }
 
     [Fact]
+    public async Task RunAsync_RouteSystemPromptOverride_IsIncludedInSystemMessage()
+    {
+        var chatClient = Substitute.For<IChatClient>();
+        IList<ChatMessage>? captured = null;
+        chatClient.GetResponseAsync(
+                Arg.Do<IList<ChatMessage>>(messages => captured = messages),
+                Arg.Any<ChatOptions>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new ChatResponse(new[] { new ChatMessage(ChatRole.Assistant, "ok") })));
+        var memory = Substitute.For<IMemoryStore>();
+
+        var agent = new AgentRuntime(chatClient, [], memory, DefaultConfig, maxHistoryTurns: 10);
+        var session = CreateSession();
+        session.SystemPromptOverride = "Answer like the incident response agent.";
+
+        _ = await agent.RunAsync(session, "hello", CancellationToken.None);
+
+        Assert.NotNull(captured);
+        var systemMessage = Assert.Single(captured!, static message => message.Role == ChatRole.System);
+        Assert.Contains("[Route Instructions]", systemMessage.Text, StringComparison.Ordinal);
+        Assert.Contains("incident response agent", systemMessage.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AgentStreamEvent_EnvelopeType_Maps_Correctly()
     {
         Assert.Equal("assistant_chunk", AgentStreamEvent.TextDelta("x").EnvelopeType);

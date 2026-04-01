@@ -22,6 +22,7 @@ internal static class CoreServicesExtensions
         var config = startup.Config;
 
         services.AddSingleton(config);
+        services.AddSingleton(config.Learning);
         services.AddSingleton(typeof(AllowlistSemantics), AllowlistPolicy.ParseSemantics(config.Channels.AllowlistSemantics));
         services.AddSingleton(sp =>
             new RecentSendersStore(config.Memory.StoragePath, sp.GetRequiredService<ILogger<RecentSendersStore>>()));

@@ -30,6 +30,32 @@ internal sealed class ToolPresetResolver : IToolPresetResolver
         "notion_write"
     ];
 
+    private static readonly string[] CodingPresetAllow =
+    [
+        "shell", "read_file", "write_file", "edit_file", "apply_patch", "process", "git",
+        "code_exec", "browser", "memory", "memory_search", "memory_get", "project_memory",
+        "sessions", "session_search", "session_status", "delegate_agent",
+        "web_search", "web_fetch", "pdf_read", "image_gen", "vision_analyze"
+    ];
+
+    private static readonly string[] MessagingPresetAllow =
+    [
+        "message", "sessions", "sessions_send", "sessions_history", "sessions_spawn",
+        "session_status", "session_search", "memory", "memory_search", "memory_get",
+        "profile_read", "todo"
+    ];
+
+    private static readonly Dictionary<string, ToolsetConfig> BuiltInToolsets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["group:runtime"] = new() { AllowTools = ["shell", "process", "code_exec"] },
+        ["group:fs"] = new() { AllowTools = ["read_file", "write_file", "edit_file", "apply_patch"] },
+        ["group:sessions"] = new() { AllowTools = ["sessions", "sessions_history", "sessions_send", "sessions_spawn", "session_status", "session_search", "agents_list"] },
+        ["group:memory"] = new() { AllowTools = ["memory", "memory_search", "memory_get", "project_memory"] },
+        ["group:web"] = new() { AllowTools = ["web_search", "web_fetch", "x_search", "browser"] },
+        ["group:automation"] = new() { AllowTools = ["cron", "automation", "gateway", "todo"] },
+        ["group:messaging"] = new() { AllowTools = ["message"] },
+    };
+
     private readonly GatewayConfig _config;
     private readonly SessionMetadataStore _metadataStore;
 
@@ -46,9 +72,11 @@ internal sealed class ToolPresetResolver : IToolPresetResolver
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var metadata = _metadataStore.Get(session.Id);
-        var requestedPresetId = metadata.ActivePresetId;
         var surface = InferSurface(session);
+        var metadata = _metadataStore.Get(session.Id);
+        var requestedPresetId = !string.IsNullOrWhiteSpace(session.RoutePresetId)
+            ? session.RoutePresetId
+            : metadata.ActivePresetId;
         var presetId = string.IsNullOrWhiteSpace(requestedPresetId)
             ? ResolvePresetIdForSurface(surface)
             : requestedPresetId!.Trim();
@@ -64,7 +92,7 @@ internal sealed class ToolPresetResolver : IToolPresetResolver
         var names = availableToolNames.ToArray();
         var configured = _config.Tooling.Presets.Keys
             .Select(presetId => ResolveConfiguredPreset(presetId, surface: "", _config.Tooling.Presets[presetId], names));
-        var builtInIds = new[] { "cli", "web", "telegram", "automation", "readonly" }
+        var builtInIds = new[] { "cli", "full", "coding", "messaging", "minimal", "web", "telegram", "automation", "readonly" }
             .Where(id => !_config.Tooling.Presets.ContainsKey(id))
             .Select(id => ResolveBuiltInPreset(id, surface: "", names));
         return configured.Concat(builtInIds)
@@ -121,7 +149,11 @@ internal sealed class ToolPresetResolver : IToolPresetResolver
         foreach (var toolsetId in preset.Toolsets)
         {
             if (!_config.Tooling.Toolsets.TryGetValue(toolsetId, out var toolset))
-                continue;
+            {
+                // Fall back to built-in toolsets (e.g. "group:runtime")
+                if (!BuiltInToolsets.TryGetValue(toolsetId, out toolset))
+                    continue;
+            }
 
             ApplyToolset(allowed, availableToolNames, toolset);
         }
@@ -179,6 +211,18 @@ internal sealed class ToolPresetResolver : IToolPresetResolver
 
         switch (presetId.ToLowerInvariant())
         {
+            case "full":
+                // All tools allowed — no denies
+                break;
+            case "coding":
+                allowed.IntersectWith(CodingPresetAllow);
+                break;
+            case "messaging":
+                allowed.IntersectWith(MessagingPresetAllow);
+                break;
+            case "minimal":
+                allowed.IntersectWith(["session_status"]);
+                break;
             case "web":
                 foreach (var tool in DefaultWebDeny)
                     allowed.Remove(tool);

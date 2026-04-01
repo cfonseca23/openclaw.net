@@ -35,6 +35,7 @@ internal static class Program
                 "migrate" => await MigrateAsync(rest),
                 "heartbeat" => await HeartbeatAsync(rest),
                 "admin" => await AdminAsync(rest),
+                "plugins" => await PluginCommands.RunAsync(rest),
                 "clawhub" => await ClawHubCommand.RunAsync(rest),
                 "version" or "--version" or "-v" => PrintVersion(),
                 _ => UnknownCommand(command)
@@ -114,6 +115,13 @@ internal static class Program
               openclaw admin posture
               openclaw admin approvals simulate --tool shell --args "{\"command\":\"pwd\"}"
               openclaw admin incident export
+
+            Plugin management:
+              openclaw plugins install <package-name>    Install from npm/ClawHub
+              openclaw plugins install ./local-plugin     Install from local path
+              openclaw plugins remove <plugin-name>       Remove a plugin
+              openclaw plugins list                       List installed plugins
+              openclaw plugins search <query>             Search npm for plugins
 
             ClawHub wrapper:
               # Forward --help to ClawHub itself:

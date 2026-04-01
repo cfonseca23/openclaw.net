@@ -78,15 +78,29 @@ public sealed class SocketBridgeTransportTests
 
     private static async Task<TestSocketClient> ConnectAsync(string socketPath)
     {
-        var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath));
-        var stream = new NetworkStream(socket, ownsSocket: true);
-        var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true)
+        const int maxAttempts = 20;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
-            AutoFlush = true
-        };
+            var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            try
+            {
+                await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath));
+                var stream = new NetworkStream(socket, ownsSocket: true);
+                var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true)
+                {
+                    AutoFlush = true
+                };
 
-        return new TestSocketClient(stream, writer);
+                return new TestSocketClient(stream, writer);
+            }
+            catch (SocketException) when (attempt < maxAttempts - 1)
+            {
+                socket.Dispose();
+                await Task.Delay(10);
+            }
+        }
+
+        throw new InvalidOperationException($"Failed to connect to test socket at {socketPath}.");
     }
 
     private sealed class TestSocketClient(Stream stream, StreamWriter writer) : IAsyncDisposable

@@ -157,7 +157,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
             return "You've reached the token limit for this session. Please start a new conversation.";
         }
 
-        ChatClientAgent agent = CreateAgent();
+        ChatClientAgent agent = CreateAgent(session);
         AgentSession mafSession = await _sessionStateStore.LoadAsync(agent, session, ct);
         var toolInvocations = new List<ToolInvocation>();
 
@@ -177,7 +177,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
             {
                 Session = session,
                 TurnContext = turnCtx,
-                SystemPromptLength = _systemPromptLength,
+                SystemPromptLength = GetSystemPromptLength(session),
                 SkillPromptLength = _skillPromptLength,
                 SessionTokenBudget = _sessionTokenBudget,
                 ToolInvocations = toolInvocations,
@@ -258,7 +258,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
             yield break;
         }
 
-        ChatClientAgent agent = CreateAgent();
+        ChatClientAgent agent = CreateAgent(session);
         AgentSession mafSession = await _sessionStateStore.LoadAsync(agent, session, ct);
         var eventChannel = Channel.CreateBounded<AgentStreamEvent>(new BoundedChannelOptions(256)
         {
@@ -293,15 +293,9 @@ public sealed class MafAgentRuntime : IAgentRuntime
         await producer;
     }
 
-    private ChatClientAgent CreateAgent()
+    private ChatClientAgent CreateAgent(Session session)
     {
-        string systemPrompt;
-        lock (_skillGate)
-        {
-            systemPrompt = _systemPrompt;
-        }
-
-        return _agentFactory.Create(_chatClient, systemPrompt, _mafTools);
+        return _agentFactory.Create(_chatClient, GetSystemPrompt(session), _mafTools);
     }
 
     private async Task ProduceStreamingRunAsync(
@@ -326,7 +320,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
             {
                 Session = session,
                 TurnContext = turnCtx,
-                SystemPromptLength = _systemPromptLength,
+                SystemPromptLength = GetSystemPromptLength(session),
                 SkillPromptLength = _skillPromptLength,
                 SessionTokenBudget = _sessionTokenBudget,
                 ToolInvocations = toolInvocations,
@@ -400,7 +394,8 @@ public sealed class MafAgentRuntime : IAgentRuntime
     }
 
     private ChatOptions CreateChatOptions(Session session, System.Text.Json.JsonElement? responseSchema)
-        => new()
+    {
+        var options = new ChatOptions
         {
             ModelId = session.ModelOverride ?? _config.Model,
             MaxOutputTokens = _config.MaxTokens,
@@ -409,6 +404,32 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 ? ChatResponseFormat.ForJsonSchema(responseSchema.Value, "response")
                 : null
         };
+
+        if (!string.IsNullOrWhiteSpace(session.ReasoningEffort))
+        {
+            options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+            options.AdditionalProperties["reasoning_effort"] = session.ReasoningEffort;
+        }
+
+        return options;
+    }
+
+    private string GetSystemPrompt(Session session)
+    {
+        string systemPrompt;
+        lock (_skillGate)
+        {
+            systemPrompt = _systemPrompt;
+        }
+
+        if (string.IsNullOrWhiteSpace(session.SystemPromptOverride))
+            return systemPrompt;
+
+        return systemPrompt + "\n\n[Route Instructions]\n" + session.SystemPromptOverride.Trim();
+    }
+
+    private int GetSystemPromptLength(Session session)
+        => GetSystemPrompt(session).Length;
 
     private async ValueTask TryInjectRecallAsync(List<ChatMessage> messages, string userMessage, CancellationToken ct)
     {

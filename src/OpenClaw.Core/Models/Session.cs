@@ -24,6 +24,21 @@ public sealed class Session
     /// <summary>Optional model override for this specific session (set via /model command).</summary>
     public string? ModelOverride { get; set; }
 
+    /// <summary>Optional route-scoped system prompt appended by gateway routing before runtime execution.</summary>
+    public string? SystemPromptOverride { get; set; }
+
+    /// <summary>Optional route-scoped tool preset that overrides the default preset resolution.</summary>
+    public string? RoutePresetId { get; set; }
+
+    /// <summary>Optional route-scoped tool allowlist applied in addition to preset filtering.</summary>
+    public string[] RouteAllowedTools { get; set; } = [];
+
+    /// <summary>Reasoning effort level for extended thinking (null/off, low, medium, high). Set via /think command.</summary>
+    public string? ReasoningEffort { get; set; }
+
+    /// <summary>When true, shows tool calls and token counts in responses. Set via /verbose command.</summary>
+    public bool VerboseMode { get; set; }
+
     /// <summary>Total input tokens consumed across all turns in this session.</summary>
     public long TotalInputTokens { get; set; }
 
@@ -429,6 +444,14 @@ public sealed record ToolInvocation
 [JsonSerializable(typeof(ChannelAuthStatusItem))]
 [JsonSerializable(typeof(WhatsAppSetupRequest))]
 [JsonSerializable(typeof(WhatsAppSetupResponse))]
+[JsonSerializable(typeof(SlackChannelConfig))]
+[JsonSerializable(typeof(DiscordChannelConfig))]
+[JsonSerializable(typeof(SignalChannelConfig))]
+[JsonSerializable(typeof(RoutingConfig))]
+[JsonSerializable(typeof(AgentRouteConfig))]
+[JsonSerializable(typeof(TailscaleConfig))]
+[JsonSerializable(typeof(GmailPubSubConfig))]
+[JsonSerializable(typeof(MdnsConfig))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

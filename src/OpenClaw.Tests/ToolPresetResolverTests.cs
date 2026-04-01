@@ -73,6 +73,43 @@ public sealed class ToolPresetResolverTests
         Assert.Contains("session_search", resolved.AllowedTools, StringComparer.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Resolve_RoutePresetId_TakesPrecedenceOverSessionMetadata()
+    {
+        var storagePath = CreateStoragePath();
+        var metadataStore = new SessionMetadataStore(storagePath, NullLogger<SessionMetadataStore>.Instance);
+        metadataStore.Set("sess_route", new SessionMetadataUpdateRequest
+        {
+            ActivePresetId = "ops"
+        });
+
+        var config = new GatewayConfig();
+        config.Tooling.Presets["ops"] = new ToolPresetConfig
+        {
+            DenyTools = ["shell"]
+        };
+        config.Tooling.Presets["readonly"] = new ToolPresetConfig
+        {
+            DenyTools = ["shell", "write_file"]
+        };
+
+        var resolver = new ToolPresetResolver(config, metadataStore);
+        var resolved = resolver.Resolve(
+            new Session
+            {
+                Id = "sess_route",
+                ChannelId = "websocket",
+                SenderId = "user1",
+                RoutePresetId = "readonly"
+            },
+            ["shell", "write_file", "session_search"]);
+
+        Assert.Equal("readonly", resolved.PresetId);
+        Assert.DoesNotContain("shell", resolved.AllowedTools, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("write_file", resolved.AllowedTools, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("session_search", resolved.AllowedTools, StringComparer.OrdinalIgnoreCase);
+    }
+
     private static string CreateStoragePath()
     {
         var path = Path.Combine(Path.GetTempPath(), "openclaw-tests", Guid.NewGuid().ToString("N"));

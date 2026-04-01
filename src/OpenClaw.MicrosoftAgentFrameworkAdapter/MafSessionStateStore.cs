@@ -149,7 +149,12 @@ public sealed class MafSessionStateStore
     {
         var historyJson = JsonSerializer.Serialize(session.History, CoreJsonContext.Default.ListChatTurn);
         var modelOverride = session.ModelOverride ?? string.Empty;
-        var payload = $"{modelOverride}\n{historyJson}";
+        var systemPromptOverride = session.SystemPromptOverride ?? string.Empty;
+        var routePresetId = session.RoutePresetId ?? string.Empty;
+        var routeAllowedTools = session.RouteAllowedTools.Length == 0
+            ? string.Empty
+            : string.Join(",", session.RouteAllowedTools.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase));
+        var payload = $"{modelOverride}\n{systemPromptOverride}\n{routePresetId}\n{routeAllowedTools}\n{historyJson}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
     }
 }

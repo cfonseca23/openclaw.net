@@ -184,6 +184,10 @@ internal static class GatewayWorkers
         LearningService? learningService,
         GatewayAutomationService? automationService)
     {
+        var routeResolver = config.Routing.Enabled
+            ? new OpenClaw.Gateway.Integrations.AgentRouteResolver(config.Routing)
+            : null;
+
         for (var i = 0; i < workerCount; i++)
         {
             _ = Task.Run(async () =>
@@ -370,6 +374,9 @@ internal static class GatewayWorkers
                             if (msg.ChannelId == "telegram") policy = config.Channels.Telegram.DmPolicy;
                             if (msg.ChannelId == "whatsapp") policy = config.Channels.WhatsApp.DmPolicy;
                             if (msg.ChannelId == "teams") policy = config.Channels.Teams.DmPolicy;
+                            if (msg.ChannelId == "slack") policy = config.Channels.Slack.DmPolicy;
+                            if (msg.ChannelId == "discord") policy = config.Channels.Discord.DmPolicy;
+                            if (msg.ChannelId == "signal") policy = config.Channels.Signal.DmPolicy;
 
                             if (policy is "closed")
                                 continue; // Silently drop all inbound messages
@@ -390,11 +397,39 @@ internal static class GatewayWorkers
                                 continue; // Drop the inbound request after sending pairing code
                             }
 
+                            // ── Multi-Agent Route Resolution ─────────────────
+                            var resolvedRoute = routeResolver?.Resolve(msg.ChannelId, msg.SenderId);
+
                             session = msg.SessionId is not null
                                 ? await sessionManager.GetOrCreateByIdAsync(msg.SessionId, msg.ChannelId, conversationRecipientId, lifetime.ApplicationStopping)
                                 : await sessionManager.GetOrCreateAsync(msg.ChannelId, conversationRecipientId, lifetime.ApplicationStopping);
                             if (session is null)
                                 throw new InvalidOperationException("Session manager returned null session.");
+
+                            // Apply route overrides to session
+                            if (resolvedRoute is not null)
+                            {
+                                session.ModelOverride = string.IsNullOrWhiteSpace(resolvedRoute.ModelOverride)
+                                    ? session.ModelOverride
+                                    : resolvedRoute.ModelOverride.Trim();
+                                session.SystemPromptOverride = string.IsNullOrWhiteSpace(resolvedRoute.SystemPrompt)
+                                    ? null
+                                    : resolvedRoute.SystemPrompt.Trim();
+                                session.RoutePresetId = string.IsNullOrWhiteSpace(resolvedRoute.PresetId)
+                                    ? null
+                                    : resolvedRoute.PresetId.Trim();
+                                session.RouteAllowedTools = resolvedRoute.AllowedTools
+                                    .Where(static item => !string.IsNullOrWhiteSpace(item))
+                                    .Select(static item => item.Trim())
+                                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .ToArray();
+                            }
+                            else
+                            {
+                                session.SystemPromptOverride = null;
+                                session.RoutePresetId = null;
+                                session.RouteAllowedTools = [];
+                            }
 
                             initialInputTokens = session.TotalInputTokens;
                             initialOutputTokens = session.TotalOutputTokens;
@@ -575,9 +610,16 @@ internal static class GatewayWorkers
                             {
                                 await wsChannel.SendStreamEventAsync(msg.SenderId, "typing_start", "", msg.MessageId, lifetime.ApplicationStopping);
 
+                                AgentStreamEvent? doneEvent = null;
                                 await foreach (var evt in agentRuntime.RunStreamingAsync(
                                     session, messageText, lifetime.ApplicationStopping, approvalCallback: ApprovalCallback))
                                 {
+                                    if (string.Equals(evt.EnvelopeType, "assistant_done", StringComparison.Ordinal))
+                                    {
+                                        doneEvent = evt;
+                                        continue;
+                                    }
+
                                     await wsChannel.SendStreamEventAsync(
                                         msg.SenderId, evt.EnvelopeType, evt.Content, msg.MessageId,
                                         lifetime.ApplicationStopping);
@@ -585,6 +627,35 @@ internal static class GatewayWorkers
                                 await sessionManager.PersistAsync(session, lifetime.ApplicationStopping);
                                 if (learningService is not null)
                                     await learningService.ObserveSessionAsync(session, lifetime.ApplicationStopping);
+
+                                // Send verbose footer via stream for streaming sessions
+                                if (session.VerboseMode)
+                                {
+                                    var streamInputDelta = session.TotalInputTokens - initialInputTokens;
+                                    var streamOutputDelta = session.TotalOutputTokens - initialOutputTokens;
+                                    var streamToolCalls = 0;
+                                    for (var ti = session.History.Count - 1; ti >= 0; ti--)
+                                    {
+                                        var turn = session.History[ti];
+                                        if (turn.ToolCalls is { Count: > 0 })
+                                            streamToolCalls += turn.ToolCalls.Count;
+                                        if (string.Equals(turn.Role, "user", StringComparison.Ordinal))
+                                            break;
+                                    }
+                                    var verboseFooter = $"\n\n---\n{streamToolCalls} tool call(s) | {streamInputDelta} in / {streamOutputDelta} out tokens (this turn)";
+                                    await wsChannel.SendStreamEventAsync(msg.SenderId, "text_delta", verboseFooter, msg.MessageId, lifetime.ApplicationStopping);
+                                }
+
+                                if (doneEvent is AgentStreamEvent completedEvent)
+                                {
+                                    await wsChannel.SendStreamEventAsync(
+                                        msg.SenderId,
+                                        completedEvent.EnvelopeType,
+                                        completedEvent.Content,
+                                        msg.MessageId,
+                                        lifetime.ApplicationStopping);
+                                }
+
                                 await wsChannel.SendStreamEventAsync(msg.SenderId, "typing_stop", "", msg.MessageId, lifetime.ApplicationStopping);
                             }
                             else
@@ -617,6 +688,23 @@ internal static class GatewayWorkers
                                 var suppressHeartbeatDelivery = heartbeatService.ShouldSuppressResult(msg.CronJobName, responseText);
                                 if (heartbeatService.IsManagedHeartbeatJob(msg.CronJobName))
                                     heartbeatService.RecordResult(session, responseText, suppressHeartbeatDelivery, inputTokenDelta, outputTokenDelta);
+
+                                // Append verbose mode footer (tool calls and token delta)
+                                if (session.VerboseMode)
+                                {
+                                    // Tool calls may be spread across multiple turns added during this run
+                                    var turnToolCalls = 0;
+                                    for (var ti = session.History.Count - 1; ti >= 0; ti--)
+                                    {
+                                        var turn = session.History[ti];
+                                        if (turn.ToolCalls is { Count: > 0 })
+                                            turnToolCalls += turn.ToolCalls.Count;
+                                        // Stop once we reach a user turn (start of this interaction)
+                                        if (string.Equals(turn.Role, "user", StringComparison.Ordinal))
+                                            break;
+                                    }
+                                    responseText += $"\n\n---\n{turnToolCalls} tool call(s) | {inputTokenDelta} in / {outputTokenDelta} out tokens (this turn)";
+                                }
 
                                 // Append Usage Tracking string if configured
                                 if (config.UsageFooter is "tokens")

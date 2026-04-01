@@ -119,6 +119,18 @@ internal static class RuntimeInitializationExtensions
             effectiveApprovalRequiredTools,
             services.ToolSandbox);
 
+        // Wire compact callback so /compact command can trigger LLM-powered compaction
+        if (agentRuntime is AgentRuntime concreteRuntime)
+        {
+            services.CommandProcessor.SetCompactCallback(async (session, ct) =>
+            {
+                var countBefore = session.History.Count;
+                await concreteRuntime.CompactHistoryAsync(session, ct);
+                var countAfter = session.History.Count;
+                return countAfter; // Return actual remaining turn count
+            });
+        }
+
         var middlewarePipeline = CreateMiddlewarePipeline(config, loggerFactory, services.ContractGovernance, services.SessionManager);
         var skillWatcher = new SkillWatcherService(
             config.Skills,
@@ -153,6 +165,28 @@ internal static class RuntimeInitializationExtensions
             pluginComposition.NativeDynamicPluginHost);
 
         await profile.OnRuntimeInitializedAsync(app, startup, runtime);
+
+        // Start integration services
+        if (config.Tailscale.Enabled)
+        {
+            var tailscale = new Integrations.TailscaleService(
+                config.Tailscale,
+                config.Port,
+                loggerFactory.CreateLogger<Integrations.TailscaleService>());
+            _ = tailscale.StartAsync(app.Lifetime.ApplicationStopping);
+            app.Lifetime.ApplicationStopping.Register(() => tailscale.DisposeAsync().AsTask().GetAwaiter().GetResult());
+        }
+
+        if (config.Mdns.Enabled)
+        {
+            var mdns = new Integrations.MdnsDiscoveryService(
+                config.Mdns,
+                config.Port,
+                loggerFactory.CreateLogger<Integrations.MdnsDiscoveryService>());
+            mdns.Start(app.Lifetime.ApplicationStopping);
+            app.Lifetime.ApplicationStopping.Register(() => mdns.DisposeAsync().AsTask().GetAwaiter().GetResult());
+        }
+
         return runtime;
     }
 
@@ -224,6 +258,15 @@ internal static class RuntimeInitializationExtensions
 
         if (config.Channels.Teams.Enabled)
             channelAdapters["teams"] = app.Services.GetRequiredService<TeamsChannel>();
+
+        if (config.Channels.Slack.Enabled)
+            channelAdapters["slack"] = app.Services.GetRequiredService<SlackChannel>();
+
+        if (config.Channels.Discord.Enabled)
+            channelAdapters["discord"] = app.Services.GetRequiredService<DiscordChannel>();
+
+        if (config.Channels.Signal.Enabled)
+            channelAdapters["signal"] = app.Services.GetRequiredService<SignalChannel>();
 
         var whatsAppWorkerHost = await CreateWhatsAppChannelAsync(app, startup, services, loggerFactory, channelAdapters);
 
@@ -452,7 +495,29 @@ internal static class RuntimeInitializationExtensions
             new TodoTool(services.SessionMetadataStore),
             new AutomationTool(services.AutomationService, services.Pipeline),
             new VisionAnalyzeTool(services.GeminiMultimodalService),
-            new TextToSpeechTool(services.TextToSpeechService)
+            new TextToSpeechTool(services.TextToSpeechService),
+
+            // Core dev tools
+            new EditFileTool(config.Tooling),
+            new ApplyPatchTool(config.Tooling),
+
+            // Session management tools
+            new SessionsHistoryTool(services.SessionManager, services.MemoryStore),
+            new SessionsSendTool(services.SessionManager, services.Pipeline),
+            new SessionsSpawnTool(services.SessionManager, services.Pipeline),
+            new SessionStatusTool(services.SessionManager),
+            new AgentsListTool(config.Delegation),
+
+            // System management tools
+            new CronTool(services.CronJobSource, services.Pipeline),
+            new GatewayTool(services.RuntimeMetrics, services.SessionManager, config),
+
+            // Communication & data tools
+            new MessageTool(services.Pipeline),
+            new XSearchTool(),
+            new MemoryGetTool(services.MemoryStore),
+            new ProfileWriteTool(services.UserProfileStore),
+            new SessionsYieldTool(services.SessionManager, services.Pipeline, services.MemoryStore),
         };
 
         if (config.Tooling.EnableBrowserTool)

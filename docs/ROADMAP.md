@@ -2,6 +2,13 @@
 
 ## Recently Completed
 
+- **Channel expansion**: Discord (Gateway WebSocket + interaction webhook), Slack (Events API + slash commands), Signal (signald/signal-cli bridge) channel adapters with DM policy, allowlists, thread-to-session mapping, and signature validation.
+- **Tool expansion** (34 → 48 native tools): edit_file, apply_patch, message, x_search, memory_get, sessions_history, sessions_send, sessions_spawn, session_status, sessions_yield, agents_list, cron, gateway, profile_write.
+- **Tool presets and groups**: 4 new built-in presets (full, coding, messaging, minimal) and 7 built-in tool groups (group:runtime, group:fs, group:sessions, group:memory, group:web, group:automation, group:messaging).
+- **Chat commands**: /think (reasoning effort), /compact (history compaction), /verbose (tool call/token output).
+- **Multi-agent routing**: per-channel/sender routing with model override, route-scoped prompt instructions, tool presets, and tool allowlist restrictions.
+- **Integrations**: Tailscale Serve/Funnel, Gmail Pub/Sub event bridge, mDNS/Bonjour service discovery.
+- **Plugin installer**: built-in `openclaw plugins install/remove/list/search` for npm/ClawHub packages.
 - Security audit closure for plugin IPC hardening, plugin-root containment, browser cancellation recovery, strict session-cap admission, and session-lock disposal.
 - Admin/operator tooling:
   - posture diagnostics
@@ -11,6 +18,56 @@
 - Optional estimated token admission control.
 - Startup/runtime composition split into explicit service, channel, plugin, and runtime assembly stages.
 - Optional native Notion scratchpad integration with scoped read/write tools (`notion`, `notion_write`), allowlists, and write approvals by default.
+
+## Runtime and Platform Expansion
+
+These are strong candidates for the next roadmap phases because they extend the current runtime, channel, and operator model without fighting the existing architecture.
+
+### Multimodal and Input Expansion
+
+4. **Voice memo transcription**
+   - Detect inbound audio across supported channels and route it through a transcription provider.
+   - Inject transcript text into the runtime before the normal agent turn starts.
+   - Provide clear degraded behavior when transcription is disabled or unavailable.
+
+5. **Checkpoint and resume for long-running tasks**
+   - Persist structured save points during multi-step execution.
+   - Allow interrupted or restarted sessions to resume from the last completed checkpoint.
+   - Start with checkpointing after successful tool batches instead of trying to snapshot every internal runtime state transition.
+
+6. **Mixture-of-agents execution**
+   - Fan out a prompt to multiple providers and synthesize a final answer from their outputs.
+   - Expose this as an optional high-cost/high-confidence runtime mode or explicit tool.
+   - Keep it profile-driven so it can be limited to selected models and use cases.
+
+### Execution and Deployment Options
+
+7. **Daytona execution backend**
+   - Add a remote workspace backend with hibernation and resume support.
+   - Fit it into the existing `IExecutionBackend` and process execution model rather than adding a separate tool path.
+   - Useful for persistent remote development-style sandboxes.
+
+8. **Modal execution backend**
+   - Add a serverless execution backend for short-lived compute-heavy tasks.
+   - Focus on one-shot and bounded process execution first.
+   - Treat GPU-enabled workloads as an optional extension once the base backend is stable.
+
+### Operator Visibility and Safety
+
+9. **CLI/TUI insights**
+   - Add an `openclaw insights` command and matching TUI panel.
+   - Summarize provider usage, token spend, tool frequency, and session counts from existing telemetry.
+   - Prefer operator-readable summaries over introducing a new analytics subsystem.
+
+10. **URL safety validation**
+   - Add SSRF-oriented URL validation in web fetch and browser tooling.
+   - Block loopback/private targets by default and allow optional blocklists.
+   - Keep this configurable, but make the safe path easy to enable globally.
+
+11. **Trajectory export**
+   - Export prompts, tool calls, results, and responses as JSONL for analysis or training pipelines.
+   - Support date-range or session-scoped export plus optional anonymization.
+   - Expose it through admin and CLI surfaces instead of burying it in storage internals.
 
 ## Security Hardening (Likely Breaking)
 

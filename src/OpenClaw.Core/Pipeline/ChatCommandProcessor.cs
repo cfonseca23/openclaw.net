@@ -24,16 +24,26 @@ public sealed class ChatCommandProcessor
         "/reset",
         "/model",
         "/usage",
+        "/think",
+        "/compact",
+        "/verbose",
         "/help"
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     private readonly SessionManager _sessionManager;
     private readonly ConcurrentDictionary<string, Func<string, CancellationToken, Task<string>>> _dynamicCommands = new(StringComparer.OrdinalIgnoreCase);
+    private Func<Session, CancellationToken, Task<int>>? _compactCallback;
 
     public ChatCommandProcessor(SessionManager sessionManager)
     {
         _sessionManager = sessionManager;
     }
+
+    /// <summary>
+    /// Sets the callback for LLM-powered history compaction (injected from gateway setup).
+    /// </summary>
+    public void SetCompactCallback(Func<Session, CancellationToken, Task<int>> callback)
+        => _compactCallback = callback;
 
     /// <summary>
     /// Registers a dynamic command handler (e.g. from a plugin).
@@ -95,8 +105,61 @@ public sealed class ChatCommandProcessor
             case "/usage":
                 return (true, $"Total Token Usage in this session:\n- Input: {session.TotalInputTokens}\n- Output: {session.TotalOutputTokens}\n- Sum: {session.TotalInputTokens + session.TotalOutputTokens}");
 
+            case "/think":
+                if (string.IsNullOrWhiteSpace(args))
+                    return (true, $"Current reasoning effort: {session.ReasoningEffort ?? "default"}\nUsage: /think off|low|medium|high");
+
+                var level = args.ToLowerInvariant();
+                if (level is "off" or "low" or "medium" or "high")
+                {
+                    session.ReasoningEffort = level == "off" ? null : level;
+                    await _sessionManager.PersistAsync(session, ct);
+                    return (true, level == "off"
+                        ? "Extended thinking disabled."
+                        : $"Reasoning effort set to: {level}");
+                }
+                return (true, "Invalid level. Use: /think off|low|medium|high");
+
+            case "/compact":
+                if (session.History.Count <= 2)
+                    return (true, "Nothing to compact — session has 2 or fewer turns.");
+
+                var turnsBefore = session.History.Count;
+                if (_compactCallback is not null)
+                {
+                    var remainingTurns = await _compactCallback(session, ct);
+                    await _sessionManager.PersistAsync(session, ct);
+                    return (true, $"Compacted: {turnsBefore} turns → {remainingTurns} turns remaining.");
+                }
+
+                // Fallback: simple trim keeping last 10 turns
+                var keepRecent = Math.Min(10, session.History.Count);
+                var removeCount = session.History.Count - keepRecent;
+                if (removeCount > 0)
+                    session.History.RemoveRange(0, removeCount);
+                await _sessionManager.PersistAsync(session, ct);
+                return (true, $"Trimmed: {turnsBefore} turns → {session.History.Count} turns (kept last {keepRecent}).");
+
+            case "/verbose":
+                if (string.IsNullOrWhiteSpace(args))
+                    return (true, $"Verbose mode: {(session.VerboseMode ? "on" : "off")}\nUsage: /verbose on|off");
+
+                if (args.Equals("on", StringComparison.OrdinalIgnoreCase))
+                {
+                    session.VerboseMode = true;
+                    await _sessionManager.PersistAsync(session, ct);
+                    return (true, "Verbose mode enabled. Tool calls and token counts will be shown.");
+                }
+                if (args.Equals("off", StringComparison.OrdinalIgnoreCase))
+                {
+                    session.VerboseMode = false;
+                    await _sessionManager.PersistAsync(session, ct);
+                    return (true, "Verbose mode disabled.");
+                }
+                return (true, "Usage: /verbose on|off");
+
             case "/help":
-                return (true, "Available commands:\n/status - Show session details\n/new (or /reset) - Clear conversation history\n/model <name> - Override the LLM model for this session\n/model reset - Clear model override\n/usage - Show token counts\n/help - Show this message");
+                return (true, "Available commands:\n/status - Show session details\n/new (or /reset) - Clear conversation history\n/model <name> - Override the LLM model for this session\n/model reset - Clear model override\n/usage - Show token counts\n/think <level> - Set reasoning effort (off/low/medium/high)\n/compact - Compact conversation history\n/verbose on|off - Toggle verbose output\n/help - Show this message");
 
             default:
                 if (_dynamicCommands.TryGetValue(command, out var dynamicHandler))

@@ -29,6 +29,10 @@ public sealed class GatewayConfig
     public ProfilesConfig Profiles { get; set; } = new();
     public LearningConfig Learning { get; set; } = new();
     public WebhooksConfig Webhooks { get; set; } = new();
+    public RoutingConfig Routing { get; set; } = new();
+    public TailscaleConfig Tailscale { get; set; } = new();
+    public GmailPubSubConfig GmailPubSub { get; set; } = new();
+    public MdnsConfig Mdns { get; set; } = new();
     public string UsageFooter { get; set; } = "off"; // "off", "tokens", "full"
 
     public int MaxConcurrentSessions { get; set; } = 64;
@@ -255,6 +259,9 @@ public sealed class ChannelsConfig
     public TelegramChannelConfig Telegram { get; set; } = new();
     public WhatsAppChannelConfig WhatsApp { get; set; } = new();
     public TeamsChannelConfig Teams { get; set; } = new();
+    public SlackChannelConfig Slack { get; set; } = new();
+    public DiscordChannelConfig Discord { get; set; } = new();
+    public SignalChannelConfig Signal { get; set; } = new();
 }
 
 public sealed class WhatsAppChannelConfig
@@ -442,6 +449,60 @@ public sealed class TelegramChannelConfig
     public string WebhookSecretTokenRef { get; set; } = "env:TELEGRAM_WEBHOOK_SECRET";
 }
 
+public sealed class SlackChannelConfig
+{
+    public bool Enabled { get; set; } = false;
+    public string DmPolicy { get; set; } = "pairing"; // open, pairing, closed
+    public string? BotToken { get; set; }
+    public string BotTokenRef { get; set; } = "env:SLACK_BOT_TOKEN";
+    public string? SigningSecret { get; set; }
+    public string SigningSecretRef { get; set; } = "env:SLACK_SIGNING_SECRET";
+    public string WebhookPath { get; set; } = "/slack/events";
+    public string SlashCommandPath { get; set; } = "/slack/commands";
+    public string[] AllowedWorkspaceIds { get; set; } = [];
+    public string[] AllowedFromUserIds { get; set; } = [];
+    public string[] AllowedChannelIds { get; set; } = [];
+    public int MaxInboundChars { get; set; } = 4096;
+    public int MaxRequestBytes { get; set; } = 64 * 1024;
+    public bool ValidateSignature { get; set; } = true;
+}
+
+public sealed class DiscordChannelConfig
+{
+    public bool Enabled { get; set; } = false;
+    public string DmPolicy { get; set; } = "pairing"; // open, pairing, closed
+    public string? BotToken { get; set; }
+    public string BotTokenRef { get; set; } = "env:DISCORD_BOT_TOKEN";
+    public string? ApplicationId { get; set; }
+    public string ApplicationIdRef { get; set; } = "env:DISCORD_APPLICATION_ID";
+    public string? PublicKey { get; set; }
+    public string PublicKeyRef { get; set; } = "env:DISCORD_PUBLIC_KEY";
+    public string WebhookPath { get; set; } = "/discord/interactions";
+    public string[] AllowedGuildIds { get; set; } = [];
+    public string[] AllowedFromUserIds { get; set; } = [];
+    public string[] AllowedChannelIds { get; set; } = [];
+    public int MaxInboundChars { get; set; } = 4096;
+    public int MaxRequestBytes { get; set; } = 64 * 1024;
+    public bool ValidateSignature { get; set; } = true;
+    public bool RegisterSlashCommands { get; set; } = true;
+    public string SlashCommandPrefix { get; set; } = "claw";
+}
+
+public sealed class SignalChannelConfig
+{
+    public bool Enabled { get; set; } = false;
+    public string DmPolicy { get; set; } = "pairing"; // open, pairing, closed
+    public string Driver { get; set; } = "signald"; // "signald" or "signal_cli"
+    public string SocketPath { get; set; } = "/var/run/signald/signald.sock";
+    public string? SignalCliPath { get; set; }
+    public string? AccountPhoneNumber { get; set; }
+    public string AccountPhoneNumberRef { get; set; } = "env:SIGNAL_PHONE_NUMBER";
+    public string[] AllowedFromNumbers { get; set; } = [];
+    public int MaxInboundChars { get; set; } = 4096;
+    public bool NoContentLogging { get; set; } = false;
+    public bool TrustAllKeys { get; set; } = true;
+}
+
 public sealed class CronConfig
 {
     public bool Enabled { get; set; } = false;
@@ -480,4 +541,60 @@ public sealed class WebhookEndpointConfig
 
     /// <summary>Maximum webhook body length in characters before truncation. Limits prompt injection surface.</summary>
     public int MaxBodyLength { get; set; } = 10_240;
+}
+
+// ── Multi-Agent Routing ─────────────────────────────────────────
+
+public sealed class RoutingConfig
+{
+    public bool Enabled { get; set; } = false;
+    public Dictionary<string, AgentRouteConfig> Routes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class AgentRouteConfig
+{
+    public string? ChannelId { get; set; }
+    public string? SenderId { get; set; }
+    public string? SystemPrompt { get; set; }
+    public string? ModelOverride { get; set; }
+    public string? PresetId { get; set; }
+    public string[] AllowedTools { get; set; } = [];
+}
+
+// ── Tailscale ───────────────────────────────────────────────────
+
+public sealed class TailscaleConfig
+{
+    public bool Enabled { get; set; } = false;
+    public string Mode { get; set; } = "off"; // "off", "serve", "funnel"
+    public int Port { get; set; } = 443;
+    public string? Hostname { get; set; }
+}
+
+// ── Gmail Pub/Sub ───────────────────────────────────────────────
+
+public sealed class GmailPubSubConfig
+{
+    public bool Enabled { get; set; } = false;
+    public string? CredentialsPath { get; set; }
+    public string CredentialsPathRef { get; set; } = "env:GOOGLE_APPLICATION_CREDENTIALS";
+    public string? TopicName { get; set; }
+    public string? SubscriptionName { get; set; }
+    public string WebhookPath { get; set; } = "/gmail/push";
+    public string? SessionId { get; set; }
+    public string Prompt { get; set; } = "A new email notification was received. Check inbox and triage.";
+
+    /// <summary>Shared secret token for authenticating push requests. Set as a query param or header.</summary>
+    public string? WebhookSecret { get; set; }
+    public string WebhookSecretRef { get; set; } = "env:GMAIL_PUBSUB_SECRET";
+}
+
+// ── mDNS/Bonjour Discovery ─────────────────────────────────────
+
+public sealed class MdnsConfig
+{
+    public bool Enabled { get; set; } = false;
+    public string ServiceType { get; set; } = "_openclaw._tcp";
+    public string? InstanceName { get; set; }
+    public int Port { get; set; } = 0; // 0 = use gateway port
 }

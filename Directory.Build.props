@@ -23,6 +23,14 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'OpenClaw.Gateway'">
+    <OpenClawFeatureVariant>standard</OpenClawFeatureVariant>
+    <OpenClawFeatureVariant Condition="'$(OpenClawEnableMafExperiment)' == 'true'">$(OpenClawFeatureVariant)-maf</OpenClawFeatureVariant>
+    <OpenClawFeatureVariant Condition="'$(OpenClawEnableOpenSandbox)' == 'true'">$(OpenClawFeatureVariant)-opensandbox</OpenClawFeatureVariant>
+    <BaseIntermediateOutputPath>obj/$(OpenClawFeatureVariant)/</BaseIntermediateOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**</DefaultItemExcludes>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
