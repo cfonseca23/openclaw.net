@@ -210,40 +210,21 @@ internal sealed class ContractGovernanceService
         _contractStore.Append(BuildSnapshot(session, status: "active"));
     }
 
+    public decimal ComputeSessionCostUsd(Session session)
+        => session.ContractAccumulatedCostUsd;
+
     /// <summary>
-    /// Compute approximate USD cost for a session based on provider usage and configured rates.
+    /// Estimates session cost from recent turn history. Note: this is observability-only
+    /// and may undercount for sessions exceeding 256 turns. For budget enforcement,
+    /// use the accumulated counter via <see cref="ComputeSessionCostUsd(Session)"/>.
     /// </summary>
     public decimal ComputeSessionCostUsd(string sessionId)
     {
-        var userRates = _startup.Config.TokenCostRates;
-        var defaultRates = DefaultTokenCostRates.Rates;
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
 
-        var turns = _providerUsage.RecentTurns(sessionId, limit: 256);
         var totalCost = 0m;
-
-        foreach (var turn in turns)
-        {
-            var key = $"{turn.ProviderId}:{turn.ModelId}";
-
-            // Try user-configured rates first (model-specific, then provider-level)
-            if (userRates.TryGetValue(key, out var ratePerThousand))
-            {
-                totalCost += (turn.InputTokens + turn.OutputTokens) * ratePerThousand / 1000m;
-            }
-            else if (userRates.TryGetValue(turn.ProviderId, out var providerRate))
-            {
-                totalCost += (turn.InputTokens + turn.OutputTokens) * providerRate / 1000m;
-            }
-            // Fall back to built-in defaults (model-specific, then provider-level)
-            else if (defaultRates.TryGetValue(key, out var defaultRate))
-            {
-                totalCost += (turn.InputTokens + turn.OutputTokens) * defaultRate / 1000m;
-            }
-            else if (defaultRates.TryGetValue(turn.ProviderId, out var defaultProviderRate))
-            {
-                totalCost += (turn.InputTokens + turn.OutputTokens) * defaultProviderRate / 1000m;
-            }
-        }
+        foreach (var turn in _providerUsage.RecentTurns(sessionId, limit: 256))
+            totalCost += ComputeTurnCostUsd(turn.ProviderId, turn.ModelId, turn.InputTokens, turn.OutputTokens);
 
         return totalCost;
     }
@@ -253,19 +234,8 @@ internal sealed class ContractGovernanceService
         if (inputTokens <= 0 && outputTokens <= 0)
             return 0m;
 
-        var key = $"{providerId}:{modelId}";
-        var totalTokens = inputTokens + outputTokens;
-
-        if (_startup.Config.TokenCostRates.TryGetValue(key, out var modelRate))
-            return totalTokens * modelRate / 1000m;
-        if (_startup.Config.TokenCostRates.TryGetValue(providerId, out var providerRate))
-            return totalTokens * providerRate / 1000m;
-        if (DefaultTokenCostRates.Rates.TryGetValue(key, out var defaultModelRate))
-            return totalTokens * defaultModelRate / 1000m;
-        if (DefaultTokenCostRates.Rates.TryGetValue(providerId, out var defaultProviderRate))
-            return totalTokens * defaultProviderRate / 1000m;
-
-        return 0m;
+        var rate = TokenCostRateResolver.Resolve(_startup.Config, providerId, modelId);
+        return ((inputTokens * rate.InputUsdPer1K) + (outputTokens * rate.OutputUsdPer1K)) / 1000m;
     }
 
     public bool IsTokenBudgetExceeded(Session session)
@@ -292,6 +262,22 @@ internal sealed class ContractGovernanceService
             return;
 
         session.ContractAccumulatedCostUsd += ComputeTurnCostUsd(providerId, modelId, inputTokens, outputTokens);
+    }
+
+    public bool CancelContract(string contractId, SessionManager sessionManager, out Session? detachedSession)
+    {
+        detachedSession = sessionManager.TryGetActiveByContractId(contractId);
+        if (detachedSession?.ContractPolicy is null)
+            return false;
+
+        AppendSnapshot(detachedSession, "cancelled");
+        detachedSession.ContractPolicy = null;
+        detachedSession.ContractAttachedAtUtc = null;
+        detachedSession.ContractBaselineInputTokens = 0;
+        detachedSession.ContractBaselineOutputTokens = 0;
+        detachedSession.ContractBaselineToolCalls = 0;
+        detachedSession.ContractAccumulatedCostUsd = 0m;
+        return true;
     }
 
     public void AppendSnapshot(Session session, string status)

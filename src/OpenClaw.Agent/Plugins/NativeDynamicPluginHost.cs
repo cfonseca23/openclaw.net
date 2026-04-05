@@ -186,6 +186,8 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
         {
             var loadContext = new NativeDynamicPluginLoadContext(plugin.AssemblyPath);
             var assembly = loadContext.LoadFromAssemblyPath(plugin.AssemblyPath);
+            if (!TryValidatePluginKitReference(assembly, plugin.AssemblyPath, diagnostics))
+                throw new InvalidOperationException($"Dynamic native plugin '{manifest.Id}' references an incompatible OpenClaw.PluginKit version.");
             var type = assembly.GetType(manifest.TypeName, throwOnError: false);
             if (type is null)
                 throw new InvalidOperationException($"Type '{manifest.TypeName}' was not found in assembly '{plugin.AssemblyPath}'.");
@@ -517,6 +519,21 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
             return;
         }
 
+        if (!TryValidateCompatibility(manifest, assemblyPath, out var compatibilityDiagnostics))
+        {
+            result.Reports.Add(new PluginLoadReport
+            {
+                PluginId = manifest.Id,
+                SourcePath = Path.GetFullPath(rootPath),
+                EntryPath = assemblyPath,
+                Origin = "native_dynamic",
+                EffectiveRuntimeMode = _runtimeState.EffectiveModeName,
+                Loaded = false,
+                Diagnostics = [.. compatibilityDiagnostics]
+            });
+            return;
+        }
+
         result.Plugins.Add(new DiscoveredNativeDynamicPlugin
         {
             Manifest = manifest,
@@ -567,6 +584,119 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
         _providerRegistrationsDetailed.Clear();
         _skillRoots.Clear();
         _reports.Clear();
+    }
+
+    private static bool TryValidateCompatibility(
+        NativeDynamicPluginManifest manifest,
+        string assemblyPath,
+        out List<PluginCompatibilityDiagnostic> diagnostics)
+    {
+        diagnostics = [];
+        return TryValidateMinHostVersion(manifest, diagnostics)
+            && TryValidatePluginApiVersion(manifest, diagnostics);
+    }
+
+    private static bool TryValidateMinHostVersion(
+        NativeDynamicPluginManifest manifest,
+        ICollection<PluginCompatibilityDiagnostic> diagnostics)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.MinHostVersion))
+            return true;
+
+        if (!Version.TryParse(manifest.MinHostVersion, out var minHostVersion))
+        {
+            diagnostics.Add(new PluginCompatibilityDiagnostic
+            {
+                Severity = "error",
+                Code = "invalid_min_host_version",
+                Message = $"Dynamic native plugin '{manifest.Id}' declares an invalid minHostVersion '{manifest.MinHostVersion}'.",
+                Surface = "manifest",
+                Path = manifest.Id
+            });
+            return false;
+        }
+
+        var hostVersion = typeof(NativeDynamicPluginHost).Assembly.GetName().Version ?? new Version(0, 0);
+        if (hostVersion < minHostVersion)
+        {
+            diagnostics.Add(new PluginCompatibilityDiagnostic
+            {
+                Severity = "error",
+                Code = "host_version_too_old",
+                Message = $"Dynamic native plugin '{manifest.Id}' requires host version {minHostVersion}, but the current host is {hostVersion}.",
+                Surface = "host_version",
+                Path = manifest.Id
+            });
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryValidatePluginApiVersion(
+        NativeDynamicPluginManifest manifest,
+        ICollection<PluginCompatibilityDiagnostic> diagnostics)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.PluginApiVersion))
+            return true;
+
+        if (!Version.TryParse(manifest.PluginApiVersion, out var pluginApiVersion))
+        {
+            diagnostics.Add(new PluginCompatibilityDiagnostic
+            {
+                Severity = "error",
+                Code = "invalid_plugin_api_version",
+                Message = $"Dynamic native plugin '{manifest.Id}' declares an invalid pluginApiVersion '{manifest.PluginApiVersion}'.",
+                Surface = "manifest",
+                Path = manifest.Id
+            });
+            return false;
+        }
+
+        var hostPluginApiVersion = typeof(INativeDynamicPlugin).Assembly.GetName().Version ?? new Version(0, 0);
+        if (pluginApiVersion.Major != hostPluginApiVersion.Major)
+        {
+            diagnostics.Add(new PluginCompatibilityDiagnostic
+            {
+                Severity = "error",
+                Code = "plugin_api_version_mismatch",
+                Message = $"Dynamic native plugin '{manifest.Id}' targets plugin API major {pluginApiVersion.Major}, but the host exposes major {hostPluginApiVersion.Major}.",
+                Surface = "plugin_api",
+                Path = manifest.Id
+            });
+            return false;
+        }
+
+        return true;
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "Dynamic native plugins are JIT-only and blocked in AOT mode.")]
+    private static bool TryValidatePluginKitReference(
+        Assembly assembly,
+        string assemblyPath,
+        ICollection<PluginCompatibilityDiagnostic> diagnostics)
+    {
+        var referencedPluginKit = assembly
+            .GetReferencedAssemblies()
+            .FirstOrDefault(static candidate => string.Equals(candidate.Name, "OpenClaw.PluginKit", StringComparison.Ordinal));
+        if (referencedPluginKit?.Version is null)
+            return true;
+
+        var hostPluginKitVersion = typeof(INativeDynamicPlugin).Assembly.GetName().Version ?? new Version(0, 0);
+        if (referencedPluginKit.Version.Major != hostPluginKitVersion.Major)
+        {
+            diagnostics.Add(new PluginCompatibilityDiagnostic
+            {
+                Severity = "error",
+                Code = "pluginkit_major_version_mismatch",
+                Message = $"Dynamic native plugin references OpenClaw.PluginKit major {referencedPluginKit.Version.Major}, but the host provides major {hostPluginKitVersion.Major}.",
+                Surface = "assembly_reference",
+                Path = assemblyPath
+            });
+            return false;
+        }
+
+        return true;
     }
 
     private sealed class NativeDynamicDiscoveryResult

@@ -55,6 +55,29 @@ public sealed class ContractScopeHook : IToolHookWithContext
 
         // Check scoped capabilities (path restrictions)
         var scope = FindScope(policy, context.ToolName);
+        var hasScopedFilesystemCapability = HasScopedFilesystemCapability(policy);
+        if (scope is null && hasScopedFilesystemCapability && IsFilesystemAffectingTool(context.ToolName))
+        {
+            // Shell is always denied under scoped contracts unless explicitly granted
+            // with an unscoped shell capability (AllowedPaths empty). Other filesystem
+            // tools are denied because they lack a matching scope entry.
+            if (context.ToolName is "shell" or "code_exec")
+            {
+                _logger.LogInformation(
+                    "ContractScope: denied tool {Tool} for session {Session} — shell/exec tools require an explicit grant under scoped filesystem contracts",
+                    context.ToolName,
+                    context.SessionId);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "ContractScope: denied tool {Tool} for session {Session} — tool is unscoped under a scoped filesystem contract",
+                    context.ToolName,
+                    context.SessionId);
+            }
+            return ValueTask.FromResult(false);
+        }
+
         if (scope is not null && scope.AllowedPaths.Length > 0)
         {
             if (TryExtractScopedPaths(context.ToolName, context.ArgumentsJson, out var paths))
@@ -101,6 +124,12 @@ public sealed class ContractScopeHook : IToolHookWithContext
         }
         return null;
     }
+
+    private static bool HasScopedFilesystemCapability(ContractPolicy policy)
+        => policy.ScopedCapabilities.Any(scope => scope.AllowedPaths.Length > 0);
+
+    private static bool IsFilesystemAffectingTool(string toolName)
+        => toolName is "shell" or "code_exec" or "git" or "process" or "file_read" or "file_write" or "edit_file" or "apply_patch";
 
     private static bool IsPathAllowed(string path, string[] allowedPaths)
     {

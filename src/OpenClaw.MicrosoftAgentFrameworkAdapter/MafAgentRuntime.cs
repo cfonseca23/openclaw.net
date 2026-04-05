@@ -166,7 +166,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
             return contractBudgetMessage;
         }
 
-        if (_sessionTokenBudget > 0 && (session.TotalInputTokens + session.TotalOutputTokens) >= _sessionTokenBudget)
+        if (_sessionTokenBudget > 0 && session.GetTotalTokens() >= _sessionTokenBudget)
         {
             LogTurnComplete(turnCtx);
             return "You've reached the token limit for this session. Please start a new conversation.";
@@ -281,7 +281,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
             yield break;
         }
 
-        if (_sessionTokenBudget > 0 && (session.TotalInputTokens + session.TotalOutputTokens) >= _sessionTokenBudget)
+        if (_sessionTokenBudget > 0 && session.GetTotalTokens() >= _sessionTokenBudget)
         {
             yield return AgentStreamEvent.ErrorOccurred(
                 "You've reached the token limit for this session. Please start a new conversation.",
@@ -673,8 +673,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         var outputTokens = execution.Response.Usage?.OutputTokenCount
             ?? LlmExecutionEstimateBuilder.EstimateTokenCount(execution.Response.Text?.Length ?? 0);
 
-        session.TotalInputTokens += inputTokens;
-        session.TotalOutputTokens += outputTokens;
+        session.AddTokenUsage(inputTokens, outputTokens);
         turnContext.RecordLlmCall(elapsed, inputTokens, outputTokens);
         _metrics.IncrementLlmCalls();
         _metrics.AddInputTokens(inputTokens);

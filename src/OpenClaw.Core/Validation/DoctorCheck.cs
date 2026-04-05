@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using Spectre.Console;
 using OpenClaw.Core.Models;
+using OpenClaw.Core.Plugins;
 using OpenClaw.Core.Security;
 
 namespace OpenClaw.Core.Validation;
@@ -50,6 +51,12 @@ public static class DoctorCheck
             allPassed &= Check("Public Bind: Auth Token is set", () => !string.IsNullOrWhiteSpace(config.AuthToken),
                 warnOnly: false, "Binding to 0.0.0.0 without an AuthToken is extremely dangerous.");
 
+            allPassed &= Check(
+                "Public Bind: requester-matched HTTP tool approvals enabled",
+                () => config.Security.RequireRequesterMatchForHttpToolApproval,
+                warnOnly: true,
+                detail: "Enable OpenClaw:Security:RequireRequesterMatchForHttpToolApproval for public deployments.");
+
             var localShellEnabled = config.Tooling.AllowShell &&
                 !ToolSandboxPolicy.IsRequireSandboxed(config, "shell", ToolSandboxMode.Prefer);
             allPassed &= Check("Public Bind: Unsafe Shell Tooling disabled", () => !config.Security.AllowUnsafeToolingOnPublicBind || !localShellEnabled,
@@ -67,6 +74,65 @@ public static class DoctorCheck
                 () => runtimeState.EffectiveMode == GatewayRuntimeMode.Jit,
                 warnOnly: false,
                 detail: "Disable OpenClaw:Plugins:DynamicNative:Enabled or run a JIT-capable artifact / mode.");
+        }
+
+        if (config.Plugins.Enabled)
+        {
+            allPassed &= Check(
+                "Bridge plugin host dependency available",
+                IsNodeAvailable,
+                warnOnly: true,
+                detail: "Install Node.js or disable bridge plugins.");
+        }
+
+        if (config.Plugins.Mcp.Enabled)
+        {
+            foreach (var (serverId, server) in config.Plugins.Mcp.Servers)
+            {
+                if (!server.Enabled)
+                    continue;
+
+                var transport = server.NormalizeTransport();
+                if (transport == "http")
+                {
+                    allPassed &= Check(
+                        $"MCP server '{serverId}' URL configured",
+                        () => Uri.TryCreate(server.Url, UriKind.Absolute, out _),
+                        warnOnly: true,
+                        detail: "Set a valid absolute HTTP(S) URL for the MCP server.");
+                }
+                else
+                {
+                    allPassed &= Check(
+                        $"MCP server '{serverId}' command configured",
+                        () => !string.IsNullOrWhiteSpace(server.Command),
+                        warnOnly: true,
+                        detail: "Set Plugins:Mcp:Servers:<id>:Command or disable the server.");
+                }
+            }
+        }
+
+        if (config.Plugins.Native.Mqtt.Enabled)
+        {
+            allPassed &= Check(
+                "MQTT integration host/port configured",
+                () => !string.IsNullOrWhiteSpace(config.Plugins.Native.Mqtt.Host) && config.Plugins.Native.Mqtt.Port > 0,
+                warnOnly: true,
+                detail: "Set Plugins:Native:Mqtt:Host and a valid Port, or disable MQTT.");
+        }
+
+        if (config.Plugins.Native.Email.Enabled)
+        {
+            allPassed &= Check(
+                "Email integration SMTP configured",
+                () => !string.IsNullOrWhiteSpace(config.Plugins.Native.Email.SmtpHost) && config.Plugins.Native.Email.SmtpPort > 0,
+                warnOnly: true,
+                detail: "Set Plugins:Native:Email:SmtpHost/SmtpPort for outbound mail.");
+            allPassed &= Check(
+                "Email integration IMAP configured",
+                () => !string.IsNullOrWhiteSpace(config.Plugins.Native.Email.ImapHost) && config.Plugins.Native.Email.ImapPort > 0,
+                warnOnly: true,
+                detail: "Set Plugins:Native:Email:ImapHost/ImapPort for inbox monitoring.");
         }
 
         if (ToolSandboxPolicy.IsOpenSandboxProviderConfigured(config))
@@ -98,6 +164,23 @@ public static class DoctorCheck
                 return false;
             }
         });
+
+        allPassed &= Check("Storage volume has free space", () =>
+        {
+            try
+            {
+                var root = Path.GetPathRoot(Path.GetFullPath(config.Memory.StoragePath));
+                if (string.IsNullOrWhiteSpace(root))
+                    return true;
+
+                var drive = new DriveInfo(root);
+                return drive.AvailableFreeSpace > 100L * 1024L * 1024L;
+            }
+            catch
+            {
+                return true;
+            }
+        }, warnOnly: true, detail: "Less than 100 MB free space remains on the storage volume.");
 
         allPassed &= await CheckAsync("TCP Port is available", async () =>
         {
@@ -211,6 +294,34 @@ public static class DoctorCheck
         }
     }
 
+    private static bool IsNodeAvailable()
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        var candidates = OperatingSystem.IsWindows()
+            ? new[] { "node.exe", "node.cmd", "node.bat" }
+            : new[] { "node" };
+        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (var candidate in candidates)
+            {
+                try
+                {
+                    if (File.Exists(Path.Combine(dir, candidate)))
+                        return true;
+                }
+                catch
+                {
+                    // Ignore malformed PATH entries.
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static bool HasValidRootSet(string[] roots)
     {
         var wildcardCount = roots.Count(static root => string.Equals(root, "*", StringComparison.Ordinal));
@@ -231,20 +342,5 @@ public static class DoctorCheck
     }
 
     private static string ResolveConfiguredPath(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return "";
-
-        var resolved = SecretResolver.Resolve(path);
-        if (string.IsNullOrWhiteSpace(resolved))
-            return "";
-
-        if (resolved.StartsWith("~/", StringComparison.Ordinal) || string.Equals(resolved, "~", StringComparison.Ordinal))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            resolved = resolved.Length == 1 ? home : Path.Combine(home, resolved[2..]);
-        }
-
-        return resolved.Trim();
-    }
+        => ConfigPathResolver.Resolve(path);
 }

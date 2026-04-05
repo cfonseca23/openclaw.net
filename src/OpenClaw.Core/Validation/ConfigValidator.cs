@@ -10,6 +10,21 @@ namespace OpenClaw.Core.Validation;
 /// </summary>
 public static class ConfigValidator
 {
+    private static readonly HashSet<string> BuiltInLlmProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "openai",
+        "anthropic",
+        "claude",
+        "gemini",
+        "google",
+        "ollama",
+        "azure-openai",
+        "openai-compatible",
+        "groq",
+        "together",
+        "lmstudio"
+    };
+
     public static IReadOnlyList<string> Validate(Models.GatewayConfig config)
     {
         var errors = new List<string>();
@@ -21,6 +36,10 @@ public static class ConfigValidator
         // LLM
         if (string.IsNullOrWhiteSpace(config.Llm.Model))
             errors.Add("Llm.Model must be set.");
+        var pluginBackedProvidersPossible =
+            config.Plugins.Enabled || config.Plugins.DynamicNative.Enabled || config.Plugins.Mcp.Enabled;
+        if (!pluginBackedProvidersPossible && !BuiltInLlmProviders.Contains(config.Llm.Provider))
+            errors.Add($"Llm.Provider '{config.Llm.Provider}' is not a supported built-in provider.");
         if (config.Llm.MaxTokens < 1)
             errors.Add($"Llm.MaxTokens must be >= 1 (got {config.Llm.MaxTokens}).");
         if (config.Llm.Temperature is < 0 or > 2)
@@ -406,33 +425,31 @@ public static class ConfigValidator
 
     private static bool IsValidCronField(string field, int min, int max)
     {
+        if (string.IsNullOrWhiteSpace(field))
+            return false;
+
         if (field == "*")
             return true;
+
+        if (field == "L")
+            return min == 1;
 
         if (int.TryParse(field, out var exact))
             return exact >= min && exact <= max;
 
+        if (field.Contains(','))
+        {
+            var options = field.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return options.Length > 0 && options.All(option => IsValidCronField(option, min, max));
+        }
+
         if (field.Contains('/'))
         {
             var stepParts = field.Split('/');
-            if (stepParts.Length != 2 || stepParts[0] != "*" || !int.TryParse(stepParts[1], out var step))
-                return false;
-            return step > 0;
-        }
-
-        if (field.Contains(','))
-        {
-            var options = field.Split(',');
-            if (options.Length == 0)
+            if (stepParts.Length != 2 || !int.TryParse(stepParts[1], out var step) || step <= 0)
                 return false;
 
-            foreach (var option in options)
-            {
-                if (!int.TryParse(option, out var parsed) || parsed < min || parsed > max)
-                    return false;
-            }
-
-            return true;
+            return stepParts[0] == "*" || IsValidCronField(stepParts[0], min, max);
         }
 
         if (field.Contains('-'))
@@ -445,7 +462,7 @@ public static class ConfigValidator
                 return false;
             }
 
-            return start >= min && end <= max && start <= end;
+            return start >= min && start <= max && end >= min && end <= max;
         }
 
         return false;
@@ -494,20 +511,5 @@ public static class ConfigValidator
     }
 
     private static string ResolveConfiguredPath(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return "";
-
-        var resolved = SecretResolver.Resolve(path);
-        if (string.IsNullOrWhiteSpace(resolved))
-            return "";
-
-        if (resolved.StartsWith("~/", StringComparison.Ordinal) || string.Equals(resolved, "~", StringComparison.Ordinal))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            resolved = resolved.Length == 1 ? home : Path.Combine(home, resolved[2..]);
-        }
-
-        return resolved.Trim();
-    }
+        => ConfigPathResolver.Resolve(path);
 }

@@ -34,6 +34,18 @@ internal static class RuntimeInitializationExtensions
     {
         var config = startup.Config;
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+        var startupLogger = loggerFactory.CreateLogger("Startup");
+        startupLogger.LogInformation(
+            "Runtime mode resolved: requested={RequestedMode}, effective={EffectiveMode}, dynamicCodeSupported={DynamicCodeSupported}, orchestrator={Orchestrator}.",
+            startup.RuntimeState.RequestedMode,
+            startup.RuntimeState.EffectiveModeName,
+            startup.RuntimeState.DynamicCodeSupported,
+            RuntimeOrchestrator.Normalize(config.Runtime.Orchestrator));
+        if (startup.IsNonLoopbackBind && !config.Security.RequireRequesterMatchForHttpToolApproval)
+        {
+            startupLogger.LogWarning(
+                "Requester-matched HTTP tool approvals are disabled on a non-loopback bind. Enable OpenClaw:Security:RequireRequesterMatchForHttpToolApproval for safer public deployments.");
+        }
         var services = ResolveRuntimeServices(app);
         var blockedPluginIds = services.PluginHealth.GetBlockedPluginIds();
         var channelComposition = await BuildChannelCompositionAsync(app, startup, services, loggerFactory);
@@ -455,8 +467,8 @@ internal static class RuntimeInitializationExtensions
             EffectiveRequireToolApproval = effectiveRequireToolApproval,
             EffectiveApprovalRequiredTools = effectiveApprovalRequiredTools,
             NativeRegistry = services.NativeRegistry,
-            SessionLocks = new ConcurrentDictionary<string, SemaphoreSlim>(),
-            LockLastUsed = new ConcurrentDictionary<string, DateTimeOffset>(),
+            SessionLocks = services.SessionManager.SessionLocks,
+            LockLastUsed = services.SessionManager.LockLastUsed,
             AllowedOriginsSet = config.Security.AllowedOrigins.Length > 0
                 ? config.Security.AllowedOrigins.ToFrozenSet(StringComparer.Ordinal)
                 : null,
