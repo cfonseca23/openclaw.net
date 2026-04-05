@@ -104,7 +104,10 @@ internal static class ContractEndpoints
             {
                 var session = await runtime.SessionManager.LoadAsync(request.SessionId, ctx.RequestAborted);
                 if (session is not null)
-                    session.ContractPolicy = response.Policy;
+                {
+                    governance.AttachToSession(session, response.Policy);
+                    await runtime.SessionManager.PersistAsync(session, ctx.RequestAborted);
+                }
             }
 
             return Results.Json(response, CoreJsonContext.Default.ContractCreateResponse,

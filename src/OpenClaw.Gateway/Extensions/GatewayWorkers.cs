@@ -44,10 +44,11 @@ internal static class GatewayWorkers
         RuntimeOperationsState operations,
         RuntimeMetrics? runtimeMetrics = null,
         LearningService? learningService = null,
-        GatewayAutomationService? automationService = null)
+        GatewayAutomationService? automationService = null,
+        ContractGovernanceService? contractGovernance = null)
     {
         StartSessionCleanup(lifetime, logger, sessionManager, sessionLocks, lockLastUsed);
-        StartInboundWorkers(lifetime, logger, workerCount, isNonLoopbackBind, sessionManager, sessionLocks, lockLastUsed, pipeline, middlewarePipeline, wsChannel, agentRuntime, channelAdapters, config, cronScheduler, heartbeatService, toolApprovalService, approvalAuditStore, pairingManager, commandProcessor, operations, runtimeMetrics, learningService, automationService);
+        StartInboundWorkers(lifetime, logger, workerCount, isNonLoopbackBind, sessionManager, sessionLocks, lockLastUsed, pipeline, middlewarePipeline, wsChannel, agentRuntime, channelAdapters, config, cronScheduler, heartbeatService, toolApprovalService, approvalAuditStore, pairingManager, commandProcessor, operations, runtimeMetrics, learningService, automationService, contractGovernance);
         StartOutboundWorkers(lifetime, logger, workerCount, pipeline, channelAdapters, heartbeatService);
     }
 
@@ -182,7 +183,8 @@ internal static class GatewayWorkers
         RuntimeOperationsState operations,
         RuntimeMetrics? runtimeMetrics,
         LearningService? learningService,
-        GatewayAutomationService? automationService)
+        GatewayAutomationService? automationService,
+        ContractGovernanceService? contractGovernance)
     {
         var routeResolver = config.Routing.Enabled
             ? new OpenClaw.Gateway.Integrations.AgentRouteResolver(config.Routing)
@@ -462,6 +464,7 @@ internal static class GatewayWorkers
                                 SenderId = msg.SenderId,
                                 Text = msg.Text,
                                 MessageId = msg.MessageId,
+                                SessionId = session.Id,
                                 SessionInputTokens = session.TotalInputTokens,
                                 SessionOutputTokens = session.TotalOutputTokens
                             };
@@ -731,6 +734,9 @@ internal static class GatewayWorkers
                         }
                         catch (OperationCanceledException)
                         {
+                            if (session?.ContractPolicy is not null)
+                                contractGovernance?.AppendSnapshot(session, "cancelled");
+
                             if (session is not null)
                                 logger.LogWarning("Request canceled for session {SessionId}", session.Id);
                             else

@@ -84,7 +84,8 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
         {
             foreach (var plugin in enabled)
             {
-                var requestedCapabilities = DetermineRequestedCapabilities(plugin.Manifest.Capabilities, ResolveSkillDirectories(plugin));
+                var diagnostics = new List<PluginCompatibilityDiagnostic>();
+                var requestedCapabilities = DetermineRequestedCapabilities(plugin.Manifest.Capabilities, ResolveSkillDirectories(plugin, diagnostics));
                 var blockedCapabilities = PluginCapabilityPolicy.GetBlockedCapabilities(
                     _runtimeState.EffectiveMode,
                     requestedCapabilities,
@@ -106,6 +107,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
                     Error = message,
                     Diagnostics =
                     [
+                        .. diagnostics,
                         new PluginCompatibilityDiagnostic
                         {
                             Severity = "error",
@@ -177,8 +179,8 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
     private async Task LoadPluginAsync(DiscoveredNativeDynamicPlugin plugin, CancellationToken ct)
     {
         var manifest = plugin.Manifest;
-        var requestedCapabilities = DetermineRequestedCapabilities(manifest.Capabilities, ResolveSkillDirectories(plugin));
         var diagnostics = new List<PluginCompatibilityDiagnostic>();
+        var requestedCapabilities = DetermineRequestedCapabilities(manifest.Capabilities, ResolveSkillDirectories(plugin, diagnostics));
 
         try
         {
@@ -224,7 +226,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
             _providerRegistrations.AddRange(registrationContext.Providers);
             _providerRegistrationsDetailed.AddRange(registrationContext.Providers.Select(provider => (manifest.Id, provider.ProviderId, provider.Models, provider.Client)));
 
-            var skillDirs = ResolveSkillDirectories(plugin).ToArray();
+            var skillDirs = ResolveSkillDirectories(plugin, diagnostics).ToArray();
             foreach (var skillDir in skillDirs)
             {
                 if (!_skillRoots.Contains(skillDir, StringComparer.Ordinal))
@@ -286,7 +288,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
             : config;
     }
 
-    private IReadOnlyList<string> ResolveSkillDirectories(DiscoveredNativeDynamicPlugin plugin)
+    private IReadOnlyList<string> ResolveSkillDirectories(DiscoveredNativeDynamicPlugin plugin, ICollection<PluginCompatibilityDiagnostic>? diagnostics = null)
     {
         var result = new List<string>();
         foreach (var relativePath in plugin.Manifest.Skills ?? [])
@@ -294,7 +296,23 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
             if (string.IsNullOrWhiteSpace(relativePath))
                 continue;
 
-            var resolved = Path.GetFullPath(Path.Combine(plugin.RootPath, relativePath));
+            if (!PluginDiscovery.TryResolveContainedPath(plugin.RootPath, relativePath, out var resolved))
+            {
+                _logger.LogWarning(
+                    "Dynamic native plugin '{PluginId}' declared out-of-root skill directory {Path}",
+                    plugin.Manifest.Id,
+                    relativePath);
+                diagnostics?.Add(new PluginCompatibilityDiagnostic
+                {
+                    Severity = "error",
+                    Code = "skill_dir_outside_root",
+                    Message = $"Dynamic native plugin '{plugin.Manifest.Id}' skill directory resolves outside the plugin root.",
+                    Surface = "skills",
+                    Path = relativePath
+                });
+                continue;
+            }
+
             if (!Directory.Exists(resolved))
             {
                 _logger.LogWarning(

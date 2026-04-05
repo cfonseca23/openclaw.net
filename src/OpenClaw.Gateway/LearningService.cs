@@ -163,17 +163,37 @@ internal sealed class LearningService
             ]
         };
 
+        if (_config.ReviewRequired)
+        {
+            await _proposalStore.SaveProposalAsync(new LearningProposal
+            {
+                Id = $"lp_{Guid.NewGuid():N}"[..20],
+                Kind = LearningProposalKind.ProfileUpdate,
+                Status = LearningProposalStatus.Pending,
+                ActorId = actorId,
+                Title = "Profile update suggestion",
+                Summary = "Detected a possible stable user preference or identity hint.",
+                ProfileUpdate = profile,
+                SourceSessionIds = [session.Id],
+                Confidence = 0.55f
+            }, ct);
+            return;
+        }
+
+        await _profileStore.SaveProfileAsync(profile, ct);
         await _proposalStore.SaveProposalAsync(new LearningProposal
         {
             Id = $"lp_{Guid.NewGuid():N}"[..20],
             Kind = LearningProposalKind.ProfileUpdate,
-            Status = LearningProposalStatus.Pending,
+            Status = LearningProposalStatus.Approved,
             ActorId = actorId,
             Title = "Profile update suggestion",
             Summary = "Detected a possible stable user preference or identity hint.",
             ProfileUpdate = profile,
             SourceSessionIds = [session.Id],
-            Confidence = 0.55f
+            Confidence = 0.55f,
+            ReviewedAtUtc = DateTimeOffset.UtcNow,
+            ReviewNotes = "auto-applied because Learning.ReviewRequired=false"
         }, ct);
     }
 
@@ -209,18 +229,25 @@ internal sealed class LearningService
             TemplateKey = "custom"
         };
 
-        await _proposalStore.SaveProposalAsync(new LearningProposal
+        var automationProposal = new LearningProposal
         {
             Id = $"lp_{Guid.NewGuid():N}"[..20],
             Kind = LearningProposalKind.AutomationSuggestion,
-            Status = LearningProposalStatus.Pending,
+            Status = _config.ReviewRequired ? LearningProposalStatus.Pending : LearningProposalStatus.Approved,
             ActorId = actorId,
             Title = lastUser.Content,
             Summary = "Repeated prompt detected; suggested as a disabled automation draft.",
             AutomationDraft = automation,
             SourceSessionIds = [session.Id],
-            Confidence = Math.Min(0.9f, 0.3f + (search.Items.Count * 0.1f))
-        }, ct);
+            Confidence = Math.Min(0.9f, 0.3f + (search.Items.Count * 0.1f)),
+            ReviewedAtUtc = _config.ReviewRequired ? null : DateTimeOffset.UtcNow,
+            ReviewNotes = _config.ReviewRequired ? null : "auto-saved draft because Learning.ReviewRequired=false"
+        };
+
+        if (!_config.ReviewRequired)
+            await _automationStore.SaveAutomationAsync(automation, ct);
+
+        await _proposalStore.SaveProposalAsync(automationProposal, ct);
     }
 
     private async Task EnsureSkillProposalAsync(Session session, string actorId, ChatTurn assistantTurn, CancellationToken ct)

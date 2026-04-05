@@ -57,16 +57,29 @@ public sealed class ContractScopeHook : IToolHookWithContext
         var scope = FindScope(policy, context.ToolName);
         if (scope is not null && scope.AllowedPaths.Length > 0)
         {
-            if (TryExtractPathArgument(context.ToolName, context.ArgumentsJson, out var path) &&
-                !string.IsNullOrWhiteSpace(path))
+            if (TryExtractScopedPaths(context.ToolName, context.ArgumentsJson, out var paths))
             {
-                if (!IsPathAllowed(path!, scope.AllowedPaths))
+                foreach (var path in paths)
                 {
-                    _logger.LogInformation(
-                        "ContractScope: denied tool {Tool} path {Path} for session {Session} — outside scoped paths",
-                        context.ToolName, path, context.SessionId);
-                    return ValueTask.FromResult(false);
+                    if (string.IsNullOrWhiteSpace(path))
+                        continue;
+
+                    if (!IsPathAllowed(path, scope.AllowedPaths))
+                    {
+                        _logger.LogInformation(
+                            "ContractScope: denied tool {Tool} path {Path} for session {Session} — outside scoped paths",
+                            context.ToolName, path, context.SessionId);
+                        return ValueTask.FromResult(false);
+                    }
                 }
+            }
+            else if (RequiresResolvedScopedPath(context.ToolName))
+            {
+                _logger.LogInformation(
+                    "ContractScope: denied tool {Tool} for session {Session} — scoped path could not be resolved safely",
+                    context.ToolName,
+                    context.SessionId);
+                return ValueTask.FromResult(false);
             }
         }
 
@@ -117,27 +130,57 @@ public sealed class ContractScopeHook : IToolHookWithContext
         return false;
     }
 
-    private static bool TryExtractPathArgument(string toolName, string arguments, out string? path)
+    private static bool TryExtractScopedPaths(string toolName, string arguments, out IReadOnlyList<string> paths)
     {
-        path = null;
-        var prop = toolName switch
-        {
-            "git" => "cwd",
-            _ => "path"
-        };
+        paths = [];
 
         try
         {
             using var doc = JsonDocument.Parse(arguments);
-            if (doc.RootElement.TryGetProperty(prop, out var p) && p.ValueKind == JsonValueKind.String)
+            var root = doc.RootElement;
+            var extracted = toolName switch
             {
-                path = p.GetString();
-                return !string.IsNullOrWhiteSpace(path);
-            }
+                "git" => TryReadStringList(root, "cwd", out paths),
+                "process" => TryReadProcessPaths(root, out paths),
+                "shell" => false,
+                "file_read" or "file_write" or "edit_file" or "apply_patch" => TryReadStringList(root, "path", out paths),
+                _ => TryReadStringList(root, "path", out paths)
+            };
+
+            return extracted && paths.Count > 0;
         }
         catch { }
 
         return false;
+    }
+
+    private static bool RequiresResolvedScopedPath(string toolName)
+        => toolName is "git" or "process" or "shell";
+
+    private static bool TryReadProcessPaths(JsonElement root, out IReadOnlyList<string> paths)
+    {
+        paths = [];
+        var action = root.TryGetProperty("action", out var actionProp) && actionProp.ValueKind == JsonValueKind.String
+            ? actionProp.GetString()
+            : null;
+        if (!string.Equals(action, "start", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return TryReadStringList(root, "working_directory", out paths);
+    }
+
+    private static bool TryReadStringList(JsonElement root, string propertyName, out IReadOnlyList<string> paths)
+    {
+        paths = [];
+        if (!root.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.String)
+            return false;
+
+        var path = value.GetString();
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        paths = [path];
+        return true;
     }
 
     private static string ExpandTilde(string path)

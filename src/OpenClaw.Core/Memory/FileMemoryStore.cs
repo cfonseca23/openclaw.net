@@ -9,6 +9,19 @@ using OpenClaw.Core.Models;
 
 namespace OpenClaw.Core.Memory;
 
+public sealed class MemoryStoreCorruptionException : IOException
+{
+    public MemoryStoreCorruptionException(string message, string sessionId, string filePath, Exception innerException)
+        : base(message, innerException)
+    {
+        SessionId = sessionId;
+        FilePath = filePath;
+    }
+
+    public string SessionId { get; }
+    public string FilePath { get; }
+}
+
 /// <summary>
 /// File-based implementation of <see cref="IMemoryStore"/>.
 /// Sessions and notes are stored as JSON files with URL-safe base64 encoded filenames
@@ -84,9 +97,13 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryRe
                         return session;
                     }
                 }
-                catch
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
-                    // Fall through to normal path
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    throw QuarantineCorruptSessionFile(legacyPath, sessionId, ex);
                 }
             }
 
@@ -114,15 +131,53 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryRe
 
                 return loaded;
             }
-            catch
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                return null;
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw QuarantineCorruptSessionFile(filePath, sessionId, ex);
             }
         }
         finally
         {
             loadGate.Release();
         }
+    }
+
+    private MemoryStoreCorruptionException QuarantineCorruptSessionFile(string filePath, string sessionId, Exception ex)
+    {
+        string? quarantinePath = null;
+
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                quarantinePath = filePath + $".corrupt-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+                File.Move(filePath, quarantinePath, overwrite: true);
+            }
+        }
+        catch (Exception quarantineEx)
+        {
+            _logger?.LogWarning(
+                quarantineEx,
+                "Failed to quarantine corrupt session file {FilePath} for session {SessionId}",
+                filePath,
+                sessionId);
+        }
+
+        var effectivePath = quarantinePath ?? filePath;
+        _logger?.LogError(
+            ex,
+            "Session file for {SessionId} is corrupt or unreadable and was quarantined to {FilePath}",
+            sessionId,
+            effectivePath);
+        return new MemoryStoreCorruptionException(
+            $"Session '{sessionId}' could not be loaded because its persisted state is corrupt.",
+            sessionId,
+            effectivePath,
+            ex);
     }
 
     public async ValueTask SaveSessionAsync(Session session, CancellationToken ct)

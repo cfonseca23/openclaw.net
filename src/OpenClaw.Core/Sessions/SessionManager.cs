@@ -255,6 +255,17 @@ public sealed class SessionManager
         return null;
     }
 
+    public Session? TryGetActiveByContractId(string contractId)
+    {
+        foreach (var session in _active.Values)
+        {
+            if (string.Equals(session.ContractPolicy?.Id, contractId, StringComparison.Ordinal))
+                return session;
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Loads a specific session from memory or disk by its ID.
     /// </summary>

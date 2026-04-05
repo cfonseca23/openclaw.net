@@ -24,6 +24,27 @@ public static class DoctorCheck
         
         allPassed &= Check("LLM max tokens > 0", () => config.Llm.MaxTokens > 0);
 
+        var workspaceRoot = ResolveConfiguredPath(config.Tooling.WorkspaceRoot);
+        if (config.Tooling.WorkspaceOnly)
+        {
+            allPassed &= Check(
+                "Workspace root resolves to an absolute path",
+                () => !string.IsNullOrWhiteSpace(workspaceRoot) && Path.IsPathRooted(workspaceRoot),
+                warnOnly: false,
+                detail: "Set OpenClaw:Tooling:WorkspaceRoot to an absolute path or a resolving env: reference.");
+            allPassed &= Check(
+                "Workspace root exists",
+                () => !string.IsNullOrWhiteSpace(workspaceRoot) && Directory.Exists(workspaceRoot),
+                warnOnly: false,
+                detail: "Create the workspace directory or disable Tooling.WorkspaceOnly.");
+        }
+
+        allPassed &= Check(
+            "Filesystem root policy is well-formed",
+            () => HasValidRootSet(config.Tooling.AllowedReadRoots) && HasValidRootSet(config.Tooling.AllowedWriteRoots),
+            warnOnly: false,
+            detail: "Do not mix '*' with explicit roots, and use absolute paths for explicit filesystem roots.");
+
         if (config.BindAddress != "127.0.0.1" && config.BindAddress != "localhost")
         {
             allPassed &= Check("Public Bind: Auth Token is set", () => !string.IsNullOrWhiteSpace(config.AuthToken),
@@ -188,5 +209,42 @@ public static class DoctorCheck
         {
             return false;
         }
+    }
+
+    private static bool HasValidRootSet(string[] roots)
+    {
+        var wildcardCount = roots.Count(static root => string.Equals(root, "*", StringComparison.Ordinal));
+        if (wildcardCount > 0 && roots.Length > wildcardCount)
+            return false;
+
+        foreach (var root in roots)
+        {
+            if (string.Equals(root, "*", StringComparison.Ordinal))
+                continue;
+
+            var resolved = ResolveConfiguredPath(root);
+            if (string.IsNullOrWhiteSpace(resolved) || !Path.IsPathRooted(resolved))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static string ResolveConfiguredPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return "";
+
+        var resolved = SecretResolver.Resolve(path);
+        if (string.IsNullOrWhiteSpace(resolved))
+            return "";
+
+        if (resolved.StartsWith("~/", StringComparison.Ordinal) || string.Equals(resolved, "~", StringComparison.Ordinal))
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            resolved = resolved.Length == 1 ? home : Path.Combine(home, resolved[2..]);
+        }
+
+        return resolved.Trim();
     }
 }

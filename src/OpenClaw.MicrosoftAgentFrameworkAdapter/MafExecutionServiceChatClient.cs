@@ -150,6 +150,7 @@ internal sealed class MafExecutionServiceChatClient : IChatClient
         executionContext.TurnContext.RecordLlmCall(elapsed, resolvedInputTokens, resolvedOutputTokens);
         executionContext.Session.TotalInputTokens += resolvedInputTokens;
         executionContext.Session.TotalOutputTokens += resolvedOutputTokens;
+        executionContext.RecordContractTurnUsage?.Invoke(executionContext.Session, providerId, modelId, resolvedInputTokens, resolvedOutputTokens);
         _metrics.IncrementLlmCalls();
         _metrics.AddInputTokens(resolvedInputTokens);
         _metrics.AddOutputTokens(resolvedOutputTokens);

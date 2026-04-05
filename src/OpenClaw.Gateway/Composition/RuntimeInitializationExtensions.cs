@@ -140,6 +140,7 @@ internal static class RuntimeInitializationExtensions
             app.Services.GetRequiredService<ILogger<SkillWatcherService>>());
         skillWatcher.Start(app.Lifetime.ApplicationStopping);
 
+        await services.AutomationService.RefreshCacheAsync(app.Lifetime.ApplicationStopping);
         var cronTask = StartCronIfEnabled(loggerFactory, services.Pipeline, services.CronJobSource, app.Lifetime.ApplicationStopping);
         StartNativeEventBridges(config, loggerFactory, services.Pipeline, app.Lifetime.ApplicationStopping);
 
@@ -626,6 +627,7 @@ internal static class RuntimeInitializationExtensions
         var factory = AgentRuntimeFactorySelector.Select(
             services.GetServices<IAgentRuntimeFactory>(),
             config.Runtime.Orchestrator);
+        var contractGovernance = services.GetRequiredService<ContractGovernanceService>();
 
         return factory.Create(new AgentRuntimeFactoryContext
         {
@@ -647,7 +649,11 @@ internal static class RuntimeInitializationExtensions
             RequireToolApproval = requireToolApproval,
             ApprovalRequiredTools = approvalRequiredTools,
             ToolSandbox = toolSandbox,
-            ToolUsageTracker = services.GetRequiredService<ToolUsageTracker>()
+            ToolUsageTracker = services.GetRequiredService<ToolUsageTracker>(),
+            IsContractTokenBudgetExceeded = contractGovernance.IsTokenBudgetExceeded,
+            IsContractRuntimeBudgetExceeded = contractGovernance.IsRuntimeBudgetExceeded,
+            RecordContractTurnUsage = contractGovernance.RecordTurnUsage,
+            AppendContractSnapshot = contractGovernance.AppendSnapshot
         });
     }
 
@@ -661,8 +667,8 @@ internal static class RuntimeInitializationExtensions
         if (config.SessionRateLimitPerMinute > 0)
             middlewareList.Add(new RateLimitMiddleware(config.SessionRateLimitPerMinute, loggerFactory.CreateLogger("RateLimit")));
 
-        Func<string, string, (decimal, decimal, bool)> costChecker =
-            (channelId, senderId) => contractGovernance.CheckCostBudget(channelId, senderId, sessionManager);
+        Func<string?, string, string, (decimal, decimal, bool)> costChecker =
+            (sessionId, channelId, senderId) => contractGovernance.CheckCostBudget(sessionId, channelId, senderId, sessionManager);
 
         middlewareList.Add(new TokenBudgetMiddleware(
             config.SessionTokenBudget,

@@ -47,6 +47,19 @@ public sealed class Session
 
     /// <summary>Optional contract policy governing this session's execution limits.</summary>
     public ContractPolicy? ContractPolicy { get; set; }
+
+    /// <summary>Timestamp when the current contract was attached to this session.</summary>
+    public DateTimeOffset? ContractAttachedAtUtc { get; set; }
+
+    /// <summary>Session token counters at the time the current contract was attached.</summary>
+    public long ContractBaselineInputTokens { get; set; }
+    public long ContractBaselineOutputTokens { get; set; }
+
+    /// <summary>Session tool-call count at the time the current contract was attached.</summary>
+    public int ContractBaselineToolCalls { get; set; }
+
+    /// <summary>Accumulated USD cost incurred since the current contract was attached.</summary>
+    public decimal ContractAccumulatedCostUsd { get; set; }
 }
 
 public enum SessionState : byte

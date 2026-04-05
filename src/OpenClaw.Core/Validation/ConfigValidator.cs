@@ -80,6 +80,22 @@ public static class ConfigValidator
         if (config.Tooling.ToolTimeoutSeconds < 0)
             errors.Add($"Tooling.ToolTimeoutSeconds must be >= 0 (got {config.Tooling.ToolTimeoutSeconds}).");
 
+        if (config.Tooling.WorkspaceOnly)
+        {
+            var resolvedWorkspaceRoot = ResolveConfiguredPath(config.Tooling.WorkspaceRoot);
+            if (string.IsNullOrWhiteSpace(resolvedWorkspaceRoot))
+            {
+                errors.Add("Tooling.WorkspaceRoot must resolve to a non-empty absolute path when WorkspaceOnly=true.");
+            }
+            else if (!Path.IsPathRooted(resolvedWorkspaceRoot))
+            {
+                errors.Add("Tooling.WorkspaceRoot must resolve to an absolute path when WorkspaceOnly=true.");
+            }
+        }
+
+        ValidateRootSet("Tooling.AllowedReadRoots", config.Tooling.AllowedReadRoots, errors);
+        ValidateRootSet("Tooling.AllowedWriteRoots", config.Tooling.AllowedWriteRoots, errors);
+
         // Sandbox
         var sandboxProvider = SandboxProviderNames.Normalize(config.Sandbox.Provider);
         if (!sandboxProvider.Equals(SandboxProviderNames.None, StringComparison.OrdinalIgnoreCase) &&
@@ -449,5 +465,49 @@ public static class ConfigValidator
         {
             errors.Add($"{field} must be 'open', 'pairing', or 'closed'.");
         }
+    }
+
+    private static void ValidateRootSet(string field, string[] roots, ICollection<string> errors)
+    {
+        if (roots.Length == 0)
+            return;
+
+        var wildcardCount = roots.Count(static root => string.Equals(root, "*", StringComparison.Ordinal));
+        if (wildcardCount > 0 && roots.Length > wildcardCount)
+            errors.Add($"{field} cannot mix '*' with explicit paths.");
+
+        foreach (var root in roots)
+        {
+            if (string.Equals(root, "*", StringComparison.Ordinal))
+                continue;
+
+            var resolved = ResolveConfiguredPath(root);
+            if (string.IsNullOrWhiteSpace(resolved))
+            {
+                errors.Add($"{field} entries must resolve to non-empty absolute paths.");
+                continue;
+            }
+
+            if (!Path.IsPathRooted(resolved))
+                errors.Add($"{field} entries must be absolute paths (got '{root}').");
+        }
+    }
+
+    private static string ResolveConfiguredPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return "";
+
+        var resolved = SecretResolver.Resolve(path);
+        if (string.IsNullOrWhiteSpace(resolved))
+            return "";
+
+        if (resolved.StartsWith("~/", StringComparison.Ordinal) || string.Equals(resolved, "~", StringComparison.Ordinal))
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            resolved = resolved.Length == 1 ? home : Path.Combine(home, resolved[2..]);
+        }
+
+        return resolved.Trim();
     }
 }
