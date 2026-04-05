@@ -70,7 +70,7 @@ Representative findings from the new completion work:
 ## Remaining Intentional Differences
 
 - The supported packaging model is intentionally two deliverable families: standard and MAF-enabled.
-- MAF package risk remains a dependency-management concern because Microsoft Agent Framework is still prerelease/RC software.
+- MAF package risk now centers on normal upstream dependency changes and API evolution rather than prerelease/RC churn.
 
 Neither of those differences changes OpenClaw’s runtime ownership model or weakens security defaults.
 

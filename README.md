@@ -26,6 +26,7 @@ OpenClaw.NET takes a different path:
 - **48 native tools** covering file ops, sessions, memory, web search, messaging, home automation, databases, email, calendar, and more
 - **9 channel adapters** (Telegram, SMS, WhatsApp, Teams, Slack, Discord, Signal, email, webhooks) with DM policy, allowlists, and signature validation
 - **Native LLM providers out of the box** for **OpenAI**, **Claude / Anthropic**, and **Gemini**, plus Azure OpenAI, Ollama, and OpenAI-compatible endpoints
+- **Optional Microsoft Agent Framework 1.0 orchestrator backend** in the MAF-enabled artifacts, with `native` still the default orchestrator
 - **Review-first self-evolving workflows** that can propose profile updates, automation drafts, and skill drafts from repeated successful sessions
 - A foundation for **production-oriented agent infrastructure in .NET**
 
@@ -151,7 +152,7 @@ Supports JS/TS bridge plugins, native dynamic .NET plugins (`jit` mode), and sta
 | **Gmail Pub/Sub** | Email event triggers via Google Pub/Sub push notifications |
 | **mDNS/Bonjour** | Local network service discovery |
 | **Semantic Kernel** | Host SK tools/agents behind the gateway |
-| **MAF Orchestrator** | Microsoft Agent Framework backend (optional) |
+| **MAF Orchestrator** | Microsoft Agent Framework 1.0 backend (optional) |
 | **MCP** | Model Context Protocol facade for tools, resources, prompts |
 
 ## Architecture
