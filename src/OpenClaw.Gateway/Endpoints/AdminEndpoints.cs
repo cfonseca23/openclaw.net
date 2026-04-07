@@ -36,7 +36,7 @@ internal static class AdminEndpoints
         var automationService = FeatureFallbackServices.ResolveAutomationService(startup, app.Services, heartbeat, fallbackFeatureStore);
         var learningService = FeatureFallbackServices.ResolveLearningService(startup, app.Services, fallbackFeatureStore);
         var facade = IntegrationApiFacade.Create(startup, runtime, app.Services);
-        var sessionAdminStore = (ISessionAdminStore)app.Services.GetRequiredService<IMemoryStore>();
+        var sessionAdminStore = app.Services.GetRequiredService<ISessionAdminStore>();
         var operations = runtime.Operations;
         var modelEvaluationRunner = app.Services.GetService<ModelEvaluationRunner>()
             ?? new ModelEvaluationRunner(
@@ -268,9 +268,15 @@ internal static class AdminEndpoints
             };
 
             var metadataById = operations.SessionMetadata.GetAll();
-            var persisted = await sessionAdminStore.ListSessionsAsync(page, pageSize, query, ctx.RequestAborted);
+            var persisted = await SessionAdminPersistedListing.ListPersistedAsync(
+                sessionAdminStore,
+                page,
+                pageSize,
+                query,
+                metadataById,
+                ctx.RequestAborted);
             var active = (await runtime.SessionManager.ListActiveAsync(ctx.RequestAborted))
-                .Where(session => MatchesSessionQuery(session, query, metadataById))
+                .Where(session => SessionAdminQuery.MatchesSessionQuery(session, query, metadataById))
                 .OrderByDescending(static session => session.LastActiveAt)
                 .Select(static session => new SessionSummary
                 {
@@ -287,21 +293,11 @@ internal static class AdminEndpoints
                 })
                 .ToArray();
 
-            var persistedFiltered = new PagedSessionList
-            {
-                Page = persisted.Page,
-                PageSize = persisted.PageSize,
-                HasMore = persisted.HasMore,
-                Items = persisted.Items
-                    .Where(item => MatchesSummaryQuery(item, query, metadataById))
-                    .ToArray()
-            };
-
             return Results.Json(new AdminSessionsResponse
             {
                 Filters = query,
                 Active = active,
-                Persisted = persistedFiltered
+                Persisted = persisted
             }, CoreJsonContext.Default.AdminSessionsResponse);
         });
 
@@ -1020,9 +1016,13 @@ internal static class AdminEndpoints
             };
 
             var metadataById = operations.SessionMetadata.GetAll();
-            var persisted = await sessionAdminStore.ListSessionsAsync(1, 200, query, ctx.RequestAborted);
+            var summaries = await SessionAdminPersistedListing.ListAllMatchingSummariesAsync(
+                sessionAdminStore,
+                query,
+                metadataById,
+                ctx.RequestAborted);
             var items = new List<SessionExportItem>();
-            foreach (var summary in persisted.Items.Where(item => MatchesSummaryQuery(item, query, metadataById)))
+            foreach (var summary in summaries)
             {
                 var session = await runtime.SessionManager.LoadAsync(summary.Id, ctx.RequestAborted);
                 if (session is null)
@@ -2057,94 +2057,6 @@ internal static class AdminEndpoints
         return Enum.TryParse<SessionState>(value, ignoreCase: true, out var state)
             ? state
             : null;
-    }
-
-    private static bool MatchesSessionQuery(
-        Session session,
-        SessionListQuery query,
-        IReadOnlyDictionary<string, SessionMetadataSnapshot> metadataById)
-    {
-        if (!string.IsNullOrWhiteSpace(query.ChannelId) &&
-            !string.Equals(session.ChannelId, query.ChannelId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.SenderId) &&
-            !string.Equals(session.SenderId, query.SenderId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (query.FromUtc is { } fromUtc && session.LastActiveAt < fromUtc)
-            return false;
-
-        if (query.ToUtc is { } toUtc && session.LastActiveAt > toUtc)
-            return false;
-
-        if (query.State is { } state && session.State != state)
-            return false;
-
-        var metadata = metadataById.TryGetValue(session.Id, out var storedMetadata)
-            ? storedMetadata
-            : new SessionMetadataSnapshot { SessionId = session.Id, Starred = false, Tags = [] };
-
-        if (query.Starred is { } starred && metadata.Starred != starred)
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.Tag) &&
-            !metadata.Tags.Contains(query.Tag, StringComparer.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(query.Search))
-            return true;
-
-        return session.Id.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || session.ChannelId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || session.SenderId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || metadata.Tags.Any(tag => tag.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static bool MatchesSummaryQuery(
-        SessionSummary summary,
-        SessionListQuery query,
-        IReadOnlyDictionary<string, SessionMetadataSnapshot> metadataById)
-    {
-        if (!string.IsNullOrWhiteSpace(query.ChannelId) &&
-            !string.Equals(summary.ChannelId, query.ChannelId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.SenderId) &&
-            !string.Equals(summary.SenderId, query.SenderId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (query.FromUtc is { } fromUtc && summary.LastActiveAt < fromUtc)
-            return false;
-
-        if (query.ToUtc is { } toUtc && summary.LastActiveAt > toUtc)
-            return false;
-
-        if (query.State is { } state && summary.State != state)
-            return false;
-
-        var metadata = metadataById.TryGetValue(summary.Id, out var storedMetadata)
-            ? storedMetadata
-            : new SessionMetadataSnapshot { SessionId = summary.Id, Starred = false, Tags = [] };
-
-        if (query.Starred is { } starred && metadata.Starred != starred)
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.Tag) &&
-            !metadata.Tags.Contains(query.Tag, StringComparer.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(query.Search))
-            return true;
-
-        return summary.Id.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || summary.ChannelId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || summary.SenderId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || metadata.Tags.Any(tag => tag.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string BuildTranscript(Session session)

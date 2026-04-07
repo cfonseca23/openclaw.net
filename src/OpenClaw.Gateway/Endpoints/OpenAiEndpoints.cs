@@ -3,6 +3,7 @@ using System.Text.Json;
 using OpenClaw.Agent;
 using OpenClaw.Core.Middleware;
 using OpenClaw.Core.Models;
+using OpenClaw.Core.Sessions;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Composition;
 
@@ -117,25 +118,28 @@ internal static class OpenAiEndpoints
 
             try
             {
-                var lastUserIndex = req.Messages.FindLastIndex(m =>
-                    string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase));
-                var excludeIndex = lastUserIndex >= 0 ? lastUserIndex : req.Messages.Count - 1;
-
-                for (var i = 0; i < req.Messages.Count; i++)
+                if (ShouldHydrateRequestHistory(stableSessionId, session))
                 {
-                    if (i == excludeIndex)
-                        continue;
+                    var lastUserIndex = req.Messages.FindLastIndex(m =>
+                        string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase));
+                    var excludeIndex = lastUserIndex >= 0 ? lastUserIndex : req.Messages.Count - 1;
 
-                    var message = req.Messages[i];
-                    if (string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                    for (var i = 0; i < req.Messages.Count; i++)
                     {
-                        session.History.Add(new ChatTurn
+                        if (i == excludeIndex)
+                            continue;
+
+                        var message = req.Messages[i];
+                        if (string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
                         {
-                            Role = message.Role.ToLowerInvariant(),
-                            Content = message.Content
-                        });
+                            session.History.Add(new ChatTurn
+                            {
+                                Role = message.Role.ToLowerInvariant(),
+                                Content = message.Content
+                            });
+                        }
                     }
                 }
 
@@ -315,7 +319,7 @@ internal static class OpenAiEndpoints
             finally
             {
                 if (!string.IsNullOrWhiteSpace(stableSessionId))
-                    await runtime.SessionManager.PersistAsync(session, ctx.RequestAborted);
+                    await PersistStableSessionAsync(runtime.SessionManager, session);
                 else
                     runtime.SessionManager.RemoveActive(session.Id);
             }
@@ -367,7 +371,7 @@ internal static class OpenAiEndpoints
 
             var httpMwCtx = new MessageContext
             {
-                ChannelId = "openai-http",
+                ChannelId = "openai-responses",
                 SenderId = requesterKey,
                 SessionId = session.Id,
                 Text = req.Input,
@@ -867,11 +871,27 @@ internal static class OpenAiEndpoints
             finally
             {
                 if (!string.IsNullOrWhiteSpace(stableSessionId))
-                    await runtime.SessionManager.PersistAsync(session, ctx.RequestAborted);
+                    await PersistStableSessionAsync(runtime.SessionManager, session);
                 else
                     runtime.SessionManager.RemoveActive(session.Id);
             }
         });
+    }
+
+    private static bool ShouldHydrateRequestHistory(string? stableSessionId, Session session)
+        => string.IsNullOrWhiteSpace(stableSessionId) || session.History.Count == 0;
+
+    private static async Task PersistStableSessionAsync(SessionManager sessionManager, Session session)
+    {
+        try
+        {
+            using var persistCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await sessionManager.PersistAsync(session, persistCts.Token);
+        }
+        catch
+        {
+            // Stable-session persistence is best-effort after the response has already been produced.
+        }
     }
 
     private static string? GetOptionalStableSessionId(HttpContext ctx)

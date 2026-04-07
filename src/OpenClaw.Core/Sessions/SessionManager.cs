@@ -76,9 +76,10 @@ public sealed class SessionManager : IAsyncDisposable, IDisposable
             }
 
             session = await _store.GetSessionAsync(key, ct);
-            if (session is not null && session.State == SessionState.Active)
+            if (session is not null)
             {
                 session.LastActiveAt = now;
+                session.State = SessionState.Active;
                 EnsureCapacityForAdmission();
                 if (_active.TryAdd(key, session))
                 {

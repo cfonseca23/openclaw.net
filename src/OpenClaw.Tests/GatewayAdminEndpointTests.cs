@@ -408,6 +408,279 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task ChatCompletions_StableSession_DoesNotDuplicatePersistedHistory()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        harness.Runtime.AgentRuntime.RunAsync(
+                Arg.Any<Session>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ToolApprovalCallback?>(),
+                Arg.Any<JsonElement?>())
+            .Returns(callInfo =>
+            {
+                var session = callInfo.Arg<Session>();
+                var userMessage = callInfo.ArgAt<string>(1);
+                session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
+                var response = $"history:{session.History.Count}";
+                session.History.Add(new ChatTurn { Role = "assistant", Content = response });
+                return Task.FromResult(response);
+            });
+
+        const string stableSessionId = "stable-chat-session";
+
+        using var firstRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        {
+            Content = JsonContent("""
+                {
+                  "messages": [
+                    { "role": "system", "content": "You are helpful." },
+                    { "role": "user", "content": "hello" }
+                  ]
+                }
+                """)
+        };
+        firstRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        firstRequest.Headers.Add("X-OpenClaw-Session-Id", stableSessionId);
+
+        var firstResponse = await harness.Client.SendAsync(firstRequest);
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        using var firstPayload = await ReadJsonAsync(firstResponse);
+        Assert.Equal(
+            "history:2",
+            firstPayload.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
+
+        using var secondRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        {
+            Content = JsonContent("""
+                {
+                  "messages": [
+                    { "role": "system", "content": "You are helpful." },
+                    { "role": "user", "content": "hello" },
+                    { "role": "assistant", "content": "history:2" },
+                    { "role": "user", "content": "follow up" }
+                  ]
+                }
+                """)
+        };
+        secondRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        secondRequest.Headers.Add("X-OpenClaw-Session-Id", stableSessionId);
+
+        var secondResponse = await harness.Client.SendAsync(secondRequest);
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        using var secondPayload = await ReadJsonAsync(secondResponse);
+        Assert.Equal(
+            "history:4",
+            secondPayload.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
+
+        var persisted = await harness.MemoryStore.GetSessionAsync(stableSessionId, CancellationToken.None);
+        Assert.NotNull(persisted);
+        Assert.Collection(
+            persisted!.History,
+            turn =>
+            {
+                Assert.Equal("system", turn.Role);
+                Assert.Equal("You are helpful.", turn.Content);
+            },
+            turn =>
+            {
+                Assert.Equal("user", turn.Role);
+                Assert.Equal("hello", turn.Content);
+            },
+            turn =>
+            {
+                Assert.Equal("assistant", turn.Role);
+                Assert.Equal("history:2", turn.Content);
+            },
+            turn =>
+            {
+                Assert.Equal("user", turn.Role);
+                Assert.Equal("follow up", turn.Content);
+            },
+            turn =>
+            {
+                Assert.Equal("assistant", turn.Role);
+                Assert.Equal("history:4", turn.Content);
+            });
+
+        Assert.True(harness.Runtime.SessionManager.RemoveActive(stableSessionId));
+    }
+
+    [Fact]
+    public async Task ChatCompletions_StableSession_ReturnsResponseWhenPersistenceFails()
+    {
+        await using var harness = await CreateHarnessAsync(
+            nonLoopbackBind: true,
+            memoryStoreFactory: storagePath => new FailingSaveMemoryStore(new FileMemoryStore(storagePath, maxCachedSessions: 8)));
+        harness.Runtime.AgentRuntime.RunAsync(
+                Arg.Any<Session>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ToolApprovalCallback?>(),
+                Arg.Any<JsonElement?>())
+            .Returns(callInfo =>
+            {
+                var session = callInfo.Arg<Session>();
+                var userMessage = callInfo.ArgAt<string>(1);
+                session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
+                session.History.Add(new ChatTurn { Role = "assistant", Content = "ok" });
+                return Task.FromResult("ok");
+            });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        {
+            Content = JsonContent("""
+                {
+                  "messages": [
+                    { "role": "user", "content": "hello" }
+                  ]
+                }
+                """)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        request.Headers.Add("X-OpenClaw-Session-Id", "stable-save-failure");
+
+        var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        Assert.Equal(
+            "ok",
+            payload.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
+
+        Assert.True(harness.Runtime.SessionManager.RemoveActive("stable-save-failure"));
+    }
+
+    [Fact]
+    public async Task Responses_StableSession_AccumulatesPersistedHistory()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        harness.Runtime.AgentRuntime.RunAsync(
+                Arg.Any<Session>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ToolApprovalCallback?>(),
+                Arg.Any<JsonElement?>())
+            .Returns(callInfo =>
+            {
+                var session = callInfo.Arg<Session>();
+                var userMessage = callInfo.ArgAt<string>(1);
+                session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
+                var response = $"history:{session.History.Count}";
+                session.History.Add(new ChatTurn { Role = "assistant", Content = response });
+                return Task.FromResult(response);
+            });
+
+        const string stableSessionId = "stable-responses-session";
+
+        using var firstRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/responses")
+        {
+            Content = JsonContent("""{"input":"hello"}""")
+        };
+        firstRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        firstRequest.Headers.Add("X-OpenClaw-Session-Id", stableSessionId);
+
+        var firstResponse = await harness.Client.SendAsync(firstRequest);
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        using var firstPayload = await ReadJsonAsync(firstResponse);
+        // Unlike chat completions, /v1/responses does not hydrate request history into the session,
+        // so the stub sees an empty session on the first turn (count is 1 after appending the user).
+        Assert.Equal(
+            "history:1",
+            GetResponsesAssistantText(firstPayload.RootElement));
+
+        using var secondRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/responses")
+        {
+            Content = JsonContent("""{"input":"follow up"}""")
+        };
+        secondRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        secondRequest.Headers.Add("X-OpenClaw-Session-Id", stableSessionId);
+
+        var secondResponse = await harness.Client.SendAsync(secondRequest);
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        using var secondPayload = await ReadJsonAsync(secondResponse);
+        Assert.Equal(
+            "history:3",
+            GetResponsesAssistantText(secondPayload.RootElement));
+
+        var persisted = await harness.MemoryStore.GetSessionAsync(stableSessionId, CancellationToken.None);
+        Assert.NotNull(persisted);
+        Assert.Collection(
+            persisted!.History,
+            turn =>
+            {
+                Assert.Equal("user", turn.Role);
+                Assert.Equal("hello", turn.Content);
+            },
+            turn =>
+            {
+                Assert.Equal("assistant", turn.Role);
+                Assert.Equal("history:1", turn.Content);
+            },
+            turn =>
+            {
+                Assert.Equal("user", turn.Role);
+                Assert.Equal("follow up", turn.Content);
+            },
+            turn =>
+            {
+                Assert.Equal("assistant", turn.Role);
+                Assert.Equal("history:3", turn.Content);
+            });
+
+        Assert.True(harness.Runtime.SessionManager.RemoveActive(stableSessionId));
+    }
+
+    [Fact]
+    public async Task Responses_StableSession_ReturnsResponseWhenPersistenceFails()
+    {
+        await using var harness = await CreateHarnessAsync(
+            nonLoopbackBind: true,
+            memoryStoreFactory: storagePath => new FailingSaveMemoryStore(new FileMemoryStore(storagePath, maxCachedSessions: 8)));
+        harness.Runtime.AgentRuntime.RunAsync(
+                Arg.Any<Session>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ToolApprovalCallback?>(),
+                Arg.Any<JsonElement?>())
+            .Returns(callInfo =>
+            {
+                var session = callInfo.Arg<Session>();
+                var userMessage = callInfo.ArgAt<string>(1);
+                session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
+                session.History.Add(new ChatTurn { Role = "assistant", Content = "ok" });
+                return Task.FromResult("ok");
+            });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/responses")
+        {
+            Content = JsonContent("""{"input":"hello"}""")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        request.Headers.Add("X-OpenClaw-Session-Id", "stable-responses-save-failure");
+
+        var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        Assert.Equal("ok", GetResponsesAssistantText(payload.RootElement));
+
+        Assert.True(harness.Runtime.SessionManager.RemoveActive("stable-responses-save-failure"));
+    }
+
+    private static string GetResponsesAssistantText(JsonElement root)
+    {
+        foreach (var item in root.GetProperty("output").EnumerateArray())
+        {
+            if (item.GetProperty("type").GetString() != "message")
+                continue;
+            return item.GetProperty("content")[0].GetProperty("text").GetString()!;
+        }
+
+        throw new InvalidOperationException("No assistant message in responses output.");
+    }
+
+    [Fact]
     public async Task GenericWebhook_HmacAndIdempotencyUseFullBody_WhenPromptBodyIsTruncated()
     {
         await using var harness = await CreateHarnessAsync(
@@ -615,6 +888,85 @@ public sealed class GatewayAdminEndpointTests
         Assert.Equal(
             OpenClaw.Core.Models.RuntimeOrchestrator.Native,
             payload.RootElement.GetProperty("runtime").GetProperty("orchestrator").GetString());
+    }
+
+    [Fact]
+    public async Task AdminSessions_StarredFilter_PaginatesAfterMetadataMatch()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: false);
+        var t = DateTimeOffset.Parse("2025-06-01T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        await harness.MemoryStore.SaveSessionAsync(new Session
+        {
+            Id = "sess-old",
+            ChannelId = "ch",
+            SenderId = "u",
+            CreatedAt = t,
+            LastActiveAt = t,
+            State = SessionState.Active,
+            History = []
+        }, CancellationToken.None);
+        await harness.MemoryStore.SaveSessionAsync(new Session
+        {
+            Id = "sess-mid",
+            ChannelId = "ch",
+            SenderId = "u",
+            CreatedAt = t.AddHours(1),
+            LastActiveAt = t.AddHours(1),
+            State = SessionState.Active,
+            History = []
+        }, CancellationToken.None);
+        await harness.MemoryStore.SaveSessionAsync(new Session
+        {
+            Id = "sess-new",
+            ChannelId = "ch",
+            SenderId = "u",
+            CreatedAt = t.AddHours(2),
+            LastActiveAt = t.AddHours(2),
+            State = SessionState.Active,
+            History = []
+        }, CancellationToken.None);
+
+        harness.Runtime.Operations.SessionMetadata.Set("sess-old", new SessionMetadataUpdateRequest { Starred = true });
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/admin/sessions?page=1&pageSize=2&starred=true");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var response = await harness.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        var items = payload.RootElement.GetProperty("persisted").GetProperty("items");
+        Assert.Equal(1, items.GetArrayLength());
+        Assert.Equal("sess-old", items[0].GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task AdminSessions_TagFilter_PaginatesAfterMetadataMatch()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: false);
+        var t = DateTimeOffset.Parse("2025-06-01T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        for (var i = 0; i < 3; i++)
+        {
+            await harness.MemoryStore.SaveSessionAsync(new Session
+            {
+                Id = $"sess-tag-{i}",
+                ChannelId = "ch",
+                SenderId = "u",
+                CreatedAt = t.AddHours(i),
+                LastActiveAt = t.AddHours(i),
+                State = SessionState.Active,
+                History = []
+            }, CancellationToken.None);
+        }
+
+        harness.Runtime.Operations.SessionMetadata.Set("sess-tag-0", new SessionMetadataUpdateRequest { Tags = ["vip"] });
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/admin/sessions?page=1&pageSize=2&tag=vip");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var response = await harness.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        var items = payload.RootElement.GetProperty("persisted").GetProperty("items");
+        Assert.Equal(1, items.GetArrayLength());
+        Assert.Equal("sess-tag-0", items[0].GetProperty("id").GetString());
     }
 
     [Fact]
@@ -1372,7 +1724,18 @@ public sealed class GatewayAdminEndpointTests
         return JsonDocument.Parse(payload);
     }
 
-    private static async Task<GatewayTestHarness> CreateHarnessAsync(bool nonLoopbackBind, Action<GatewayConfig>? configure = null)
+    private static async Task<GatewayTestHarness> CreateHarnessAsync(
+        bool nonLoopbackBind,
+        Action<GatewayConfig>? configure = null,
+        Func<string, IMemoryStore>? memoryStoreFactory = null)
+    {
+        return await CreateHarnessAsyncInternal(nonLoopbackBind, configure, memoryStoreFactory);
+    }
+
+    private static async Task<GatewayTestHarness> CreateHarnessAsyncInternal(
+        bool nonLoopbackBind,
+        Action<GatewayConfig>? configure,
+        Func<string, IMemoryStore>? memoryStoreFactory)
     {
         var storagePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "openclaw-admin-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
@@ -1417,10 +1780,11 @@ public sealed class GatewayAdminEndpointTests
         builder.WebHost.UseTestServer();
         builder.Services.AddOpenApi("openclaw-integration");
         builder.Services.ConfigureHttpJsonOptions(opts => opts.SerializerOptions.TypeInfoResolverChain.Add(CoreJsonContext.Default));
-        var memoryStore = new FileMemoryStore(storagePath, maxCachedSessions: 8);
+        var memoryStore = memoryStoreFactory?.Invoke(storagePath) ?? new FileMemoryStore(storagePath, maxCachedSessions: 8);
         var sessionManager = new SessionManager(memoryStore, config, NullLogger.Instance);
         var heartbeatService = new HeartbeatService(config, memoryStore, sessionManager, NullLogger<HeartbeatService>.Instance);
         builder.Services.AddSingleton<IMemoryStore>(memoryStore);
+        builder.Services.AddSingleton<ISessionAdminStore>(_ => (ISessionAdminStore)memoryStore);
         builder.Services.AddSingleton(sessionManager);
         builder.Services.AddSingleton(heartbeatService);
         builder.Services.AddSingleton(new BrowserSessionAuthService(config));
@@ -1616,5 +1980,46 @@ public sealed class GatewayAdminEndpointTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FailingSaveMemoryStore(IMemoryStore inner) : IMemoryStore, ISessionAdminStore, ISessionSearchStore, IAsyncDisposable, IDisposable
+    {
+        public ValueTask<Session?> GetSessionAsync(string sessionId, CancellationToken ct) => inner.GetSessionAsync(sessionId, ct);
+        public ValueTask SaveSessionAsync(Session session, CancellationToken ct) => throw new IOException("Simulated persistence failure.");
+        public ValueTask<string?> LoadNoteAsync(string key, CancellationToken ct) => inner.LoadNoteAsync(key, ct);
+        public ValueTask SaveNoteAsync(string key, string content, CancellationToken ct) => inner.SaveNoteAsync(key, content, ct);
+        public ValueTask DeleteNoteAsync(string key, CancellationToken ct) => inner.DeleteNoteAsync(key, ct);
+        public ValueTask<IReadOnlyList<string>> ListNotesWithPrefixAsync(string prefix, CancellationToken ct) => inner.ListNotesWithPrefixAsync(prefix, ct);
+        public ValueTask SaveBranchAsync(SessionBranch branch, CancellationToken ct) => inner.SaveBranchAsync(branch, ct);
+        public ValueTask<SessionBranch?> LoadBranchAsync(string branchId, CancellationToken ct) => inner.LoadBranchAsync(branchId, ct);
+        public ValueTask<IReadOnlyList<SessionBranch>> ListBranchesAsync(string sessionId, CancellationToken ct) => inner.ListBranchesAsync(sessionId, ct);
+        public ValueTask DeleteBranchAsync(string branchId, CancellationToken ct) => inner.DeleteBranchAsync(branchId, ct);
+        public ValueTask<PagedSessionList> ListSessionsAsync(int page, int pageSize, SessionListQuery query, CancellationToken ct)
+            => ((ISessionAdminStore)inner).ListSessionsAsync(page, pageSize, query, ct);
+        public ValueTask<SessionSearchResult> SearchSessionsAsync(SessionSearchQuery query, CancellationToken ct)
+            => ((ISessionSearchStore)inner).SearchSessionsAsync(query, ct);
+
+        public ValueTask DisposeAsync()
+        {
+            return inner switch
+            {
+                IAsyncDisposable asyncDisposable => asyncDisposable.DisposeAsync(),
+                IDisposable disposable => new ValueTask(Task.Run(disposable.Dispose)),
+                _ => ValueTask.CompletedTask
+            };
+        }
+
+        public void Dispose()
+        {
+            switch (inner)
+            {
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+                case IAsyncDisposable asyncDisposable:
+                    asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    break;
+            }
+        }
     }
 }

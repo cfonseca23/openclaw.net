@@ -31,6 +31,12 @@ internal static class CoreServicesExtensions
             new AllowlistManager(config.Memory.StoragePath, sp.GetRequiredService<ILogger<AllowlistManager>>()));
 
         services.AddSingleton<IMemoryStore>(_ => CreateMemoryStore(config));
+        services.AddSingleton<ISessionAdminStore>(sp =>
+        {
+            var memory = sp.GetRequiredService<IMemoryStore>();
+            return memory as ISessionAdminStore
+                ?? throw new InvalidOperationException($"{memory.GetType().Name} must implement ISessionAdminStore.");
+        });
         services.AddSingleton<ISessionSearchStore>(sp => (ISessionSearchStore)sp.GetRequiredService<IMemoryStore>());
         AddFeatureStores(services, config);
         services.AddSingleton<RuntimeMetrics>();

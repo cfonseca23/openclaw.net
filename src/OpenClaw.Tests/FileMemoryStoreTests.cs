@@ -139,4 +139,51 @@ public sealed class FileMemoryStoreTests
             Directory.Delete(storagePath, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task ListNotesWithPrefixAsync_LongKeys_ReturnsOriginalKey()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-file-memory-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var store = new FileMemoryStore(storagePath, 4);
+            var longKey = "project:myapp:" + new string('k', 240);
+
+            await store.SaveNoteAsync(longKey, "remember this", CancellationToken.None);
+
+            var keys = await store.ListNotesWithPrefixAsync("project:myapp:", CancellationToken.None);
+
+            Assert.Contains(longKey, keys);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SearchNotesAsync_LongKeys_RespectPrefixFilter()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-file-memory-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var store = new FileMemoryStore(storagePath, 4);
+            var longKey = "project:myapp:" + new string('p', 240);
+
+            await store.SaveNoteAsync(longKey, "architecture conventions", CancellationToken.None);
+
+            var results = await store.SearchNotesAsync("conventions", "project:myapp:", 5, CancellationToken.None);
+
+            var hit = Assert.Single(results);
+            Assert.Equal(longKey, hit.Key);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
 }

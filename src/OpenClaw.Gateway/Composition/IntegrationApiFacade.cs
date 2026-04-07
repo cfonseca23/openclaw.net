@@ -22,8 +22,7 @@ internal sealed class IntegrationApiFacade
         GatewayAppRuntime runtime,
         IServiceProvider services)
     {
-        var memoryStore = services.GetRequiredService<IMemoryStore>();
-        var sessionAdminStore = (ISessionAdminStore)memoryStore;
+        var sessionAdminStore = services.GetRequiredService<ISessionAdminStore>();
         var sessionSearchStore = FeatureFallbackServices.ResolveSessionSearchStore(services);
         var fallbackFeatureStore = FeatureFallbackServices.CreateFallbackFeatureStore(startup);
         var profileStore = services.GetService<IUserProfileStore>() ?? fallbackFeatureStore;
@@ -87,9 +86,15 @@ internal sealed class IntegrationApiFacade
     public async Task<IntegrationSessionsResponse> ListSessionsAsync(int page, int pageSize, SessionListQuery query, CancellationToken cancellationToken)
     {
         var metadataById = _runtime.Operations.SessionMetadata.GetAll();
-        var persisted = await _sessionAdminStore.ListSessionsAsync(page, pageSize, query, cancellationToken);
+        var persisted = await SessionAdminPersistedListing.ListPersistedAsync(
+            _sessionAdminStore,
+            page,
+            pageSize,
+            query,
+            metadataById,
+            cancellationToken);
         var active = (await _runtime.SessionManager.ListActiveAsync(cancellationToken))
-            .Where(session => MatchesSessionQuery(session, query, metadataById))
+            .Where(session => SessionAdminQuery.MatchesSessionQuery(session, query, metadataById))
             .OrderByDescending(static session => session.LastActiveAt)
             .Select(static session => new SessionSummary
             {
@@ -106,21 +111,11 @@ internal sealed class IntegrationApiFacade
             })
             .ToArray();
 
-        var filteredPersisted = new PagedSessionList
-        {
-            Page = persisted.Page,
-            PageSize = persisted.PageSize,
-            HasMore = persisted.HasMore,
-            Items = persisted.Items
-                .Where(item => MatchesSummaryQuery(item, query, metadataById))
-                .ToArray()
-        };
-
         return new IntegrationSessionsResponse
         {
             Filters = query,
             Active = active,
-            Persisted = filteredPersisted
+            Persisted = persisted
         };
     }
 
@@ -497,91 +492,4 @@ internal sealed class IntegrationApiFacade
             : null;
     }
 
-    private static bool MatchesSessionQuery(
-        Session session,
-        SessionListQuery query,
-        IReadOnlyDictionary<string, SessionMetadataSnapshot> metadataById)
-    {
-        if (!string.IsNullOrWhiteSpace(query.ChannelId) &&
-            !string.Equals(session.ChannelId, query.ChannelId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.SenderId) &&
-            !string.Equals(session.SenderId, query.SenderId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (query.FromUtc is { } fromUtc && session.LastActiveAt < fromUtc)
-            return false;
-
-        if (query.ToUtc is { } toUtc && session.LastActiveAt > toUtc)
-            return false;
-
-        if (query.State is { } state && session.State != state)
-            return false;
-
-        var metadata = metadataById.TryGetValue(session.Id, out var storedMetadata)
-            ? storedMetadata
-            : new SessionMetadataSnapshot { SessionId = session.Id, Starred = false, Tags = [] };
-
-        if (query.Starred is { } starred && metadata.Starred != starred)
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.Tag) &&
-            !metadata.Tags.Contains(query.Tag, StringComparer.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(query.Search))
-            return true;
-
-        return session.Id.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || session.ChannelId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || session.SenderId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || metadata.Tags.Any(tag => tag.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static bool MatchesSummaryQuery(
-        SessionSummary summary,
-        SessionListQuery query,
-        IReadOnlyDictionary<string, SessionMetadataSnapshot> metadataById)
-    {
-        if (!string.IsNullOrWhiteSpace(query.ChannelId) &&
-            !string.Equals(summary.ChannelId, query.ChannelId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.SenderId) &&
-            !string.Equals(summary.SenderId, query.SenderId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (query.FromUtc is { } fromUtc && summary.LastActiveAt < fromUtc)
-            return false;
-
-        if (query.ToUtc is { } toUtc && summary.LastActiveAt > toUtc)
-            return false;
-
-        if (query.State is { } state && summary.State != state)
-            return false;
-
-        var metadata = metadataById.TryGetValue(summary.Id, out var storedMetadata)
-            ? storedMetadata
-            : new SessionMetadataSnapshot { SessionId = summary.Id, Starred = false, Tags = [] };
-
-        if (query.Starred is { } starred && metadata.Starred != starred)
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.Tag) &&
-            !metadata.Tags.Contains(query.Tag, StringComparer.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(query.Search))
-            return true;
-
-        return summary.Id.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || summary.ChannelId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || summary.SenderId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || metadata.Tags.Any(tag => tag.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
-    }
 }

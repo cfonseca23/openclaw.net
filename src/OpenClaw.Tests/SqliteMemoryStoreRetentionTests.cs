@@ -156,6 +156,94 @@ public sealed class SqliteMemoryStoreRetentionTests
     }
 
     [Fact]
+    public async Task SweepAsync_RemovesDeletedSessionsFromFtsSearchResults()
+    {
+        var root = CreateTempDir();
+        var dbPath = Path.Combine(root, "memory.db");
+        var now = new DateTimeOffset(2026, 03, 04, 12, 0, 0, TimeSpan.Zero);
+
+        using var store = new SqliteMemoryStore(dbPath, enableFts: true);
+        await store.SaveSessionAsync(new Session
+        {
+            Id = "session-expired",
+            ChannelId = "websocket",
+            SenderId = "alice",
+            LastActiveAt = now.AddDays(-90),
+            History =
+            [
+                new ChatTurn
+                {
+                    Role = "user",
+                    Content = "legacy needle"
+                }
+            ]
+        }, CancellationToken.None);
+        await SetUpdatedAtAsync(dbPath, "sessions", "id", "session-expired", now.AddDays(-90).ToUnixTimeSeconds());
+
+        var beforeSweep = await store.SearchSessionsAsync(
+            new SessionSearchQuery { Text = "legacy" },
+            CancellationToken.None);
+        Assert.Single(beforeSweep.Items);
+
+        var result = await store.SweepAsync(
+            new RetentionSweepRequest
+            {
+                NowUtc = now,
+                SessionExpiresBeforeUtc = now.AddDays(-30),
+                BranchExpiresBeforeUtc = now.AddDays(-14),
+                ArchiveEnabled = false,
+                ArchivePath = Path.Combine(root, "archive"),
+                ArchiveRetentionDays = 30,
+                MaxItems = 1000
+            },
+            protectedSessionIds: new HashSet<string>(StringComparer.Ordinal),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.DeletedSessions);
+
+        var afterSweep = await store.SearchSessionsAsync(
+            new SessionSearchQuery { Text = "legacy" },
+            CancellationToken.None);
+        Assert.Empty(afterSweep.Items);
+    }
+
+    [Fact]
+    public async Task SweepAsync_ExpiresBranchesUsingCreatedAtInsteadOfUpdatedAt()
+    {
+        var root = CreateTempDir();
+        var dbPath = Path.Combine(root, "memory.db");
+        var now = new DateTimeOffset(2026, 03, 04, 12, 0, 0, TimeSpan.Zero);
+
+        using var store = new SqliteMemoryStore(dbPath, enableFts: false);
+        await store.SaveBranchAsync(new SessionBranch
+        {
+            BranchId = "branch-expired",
+            SessionId = "session-expired",
+            Name = "old",
+            CreatedAt = now.AddDays(-30),
+            History = []
+        }, CancellationToken.None);
+        await SetUpdatedAtAsync(dbPath, "branches", "branch_id", "branch-expired", now.ToUnixTimeSeconds());
+
+        var result = await store.SweepAsync(
+            new RetentionSweepRequest
+            {
+                NowUtc = now,
+                SessionExpiresBeforeUtc = now.AddDays(-30),
+                BranchExpiresBeforeUtc = now.AddDays(-14),
+                ArchiveEnabled = false,
+                ArchivePath = Path.Combine(root, "archive"),
+                ArchiveRetentionDays = 30,
+                MaxItems = 1000
+            },
+            protectedSessionIds: new HashSet<string>(StringComparer.Ordinal),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.DeletedBranches);
+        Assert.Null(await store.LoadBranchAsync("branch-expired", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Initialize_CreatesRetentionIndexes()
     {
         var root = CreateTempDir();

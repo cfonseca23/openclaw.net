@@ -270,15 +270,19 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryRe
         var encodedKey = EncodeKey(key);
         var filePath = Path.Combine(_notesPath, $"{encodedKey}.md");
         var tempPath = $"{filePath}.tmp";
+        var keyPath = Path.Combine(_notesPath, $"{encodedKey}.key");
+        var keyTempPath = $"{keyPath}.tmp";
 
         try
         {
             await File.WriteAllTextAsync(tempPath, content, ct);
             File.Move(tempPath, filePath, overwrite: true);
+            await PersistOriginalNoteKeyAsync(key, keyPath, keyTempPath, ct);
         }
         catch
         {
             try { File.Delete(tempPath); } catch { /* ignore */ }
+            try { File.Delete(keyTempPath); } catch { /* ignore */ }
             throw;
         }
     }
@@ -290,10 +294,12 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryRe
 
         var encodedKey = EncodeKey(key);
         var filePath = Path.Combine(_notesPath, $"{encodedKey}.md");
+        var keyPath = Path.Combine(_notesPath, $"{encodedKey}.key");
 
         try
         {
             File.Delete(filePath);
+            File.Delete(keyPath);
         }
         catch
         {
@@ -313,7 +319,7 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryRe
             foreach (var file in files)
             {
                 var encodedKey = Path.GetFileNameWithoutExtension(file);
-                var key = DecodeKey(encodedKey);
+                var key = ResolveNoteKey(encodedKey);
                 
                 if (key.StartsWith(prefix, StringComparison.Ordinal))
                     results.Add(key);
@@ -343,7 +349,7 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryRe
                 ct.ThrowIfCancellationRequested();
 
                 var encodedKey = Path.GetFileNameWithoutExtension(file);
-                var key = DecodeKey(encodedKey);
+                var key = ResolveNoteKey(encodedKey);
 
                 if (!string.IsNullOrEmpty(prefix) && !key.StartsWith(prefix, StringComparison.Ordinal))
                     continue;
@@ -787,6 +793,40 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryRe
         });
         return ValueTask.CompletedTask;
     }
+
+    private async ValueTask PersistOriginalNoteKeyAsync(string key, string keyPath, string keyTempPath, CancellationToken ct)
+    {
+        if (!RequiresKeySidecar(key))
+        {
+            try { File.Delete(keyPath); } catch { /* ignore */ }
+            return;
+        }
+
+        await File.WriteAllTextAsync(keyTempPath, key, ct);
+        File.Move(keyTempPath, keyPath, overwrite: true);
+    }
+
+    private string ResolveNoteKey(string encodedKey)
+    {
+        var keyPath = Path.Combine(_notesPath, $"{encodedKey}.key");
+        try
+        {
+            if (File.Exists(keyPath))
+            {
+                var originalKey = File.ReadAllText(keyPath);
+                if (!string.IsNullOrWhiteSpace(originalKey))
+                    return originalKey;
+            }
+        }
+        catch
+        {
+            // Fall back to the decodable key below.
+        }
+
+        return DecodeKey(encodedKey);
+    }
+
+    private static bool RequiresKeySidecar(string key) => key.Length > 200;
 
     /// <summary>
     /// Encodes a key to a URL-safe base64 string to prevent path traversal.
