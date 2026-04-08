@@ -13,6 +13,7 @@ using OpenClaw.Core.Sessions;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Extensions;
 using OpenClaw.Gateway.Models;
+using OpenClaw.Gateway.PromptCaching;
 
 namespace OpenClaw.Gateway.Composition;
 
@@ -47,6 +48,9 @@ internal static class CoreServicesExtensions
         services.AddSingleton<IModelProfileRegistry>(sp => sp.GetRequiredService<ConfiguredModelProfileRegistry>());
         services.AddSingleton<IModelSelectionPolicy, DefaultModelSelectionPolicy>();
         services.AddSingleton<ModelEvaluationRunner>();
+        services.AddSingleton<PromptCacheTraceWriter>();
+        services.AddSingleton<PromptCacheCoordinator>();
+        services.AddSingleton<PromptCacheWarmRegistry>();
         services.AddSingleton<ProviderPolicyService>(sp =>
             new ProviderPolicyService(
                 config.Memory.StoragePath,
@@ -120,6 +124,8 @@ internal static class CoreServicesExtensions
         services.AddSingleton(new WebSocketChannel(config.WebSocket));
         services.AddSingleton<ChatCommandProcessor>();
         services.AddSingleton<GatewayLlmExecutionService>();
+        services.AddSingleton<PromptCacheWarmService>();
+        services.AddHostedService(sp => sp.GetRequiredService<PromptCacheWarmService>());
         services.AddSingleton<IAgentRuntimeFactory, NativeAgentRuntimeFactory>();
 
         return services;

@@ -703,13 +703,18 @@ public sealed class MafAgentRuntime : IAgentRuntime
             ?? LlmExecutionEstimateBuilder.EstimateInputTokens(messages);
         var outputTokens = execution.Response.Usage?.OutputTokenCount
             ?? LlmExecutionEstimateBuilder.EstimateTokenCount(execution.Response.Text?.Length ?? 0);
+        var cacheUsage = PromptCacheUsageExtractor.FromUsage(execution.Response.Usage);
 
         session.AddTokenUsage(inputTokens, outputTokens);
+        session.AddCacheUsage(cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
         turnContext.RecordLlmCall(elapsed, inputTokens, outputTokens);
         _metrics.IncrementLlmCalls();
         _metrics.AddInputTokens(inputTokens);
         _metrics.AddOutputTokens(outputTokens);
+        _metrics.AddPromptCacheReads(cacheUsage.CacheReadTokens);
+        _metrics.AddPromptCacheWrites(cacheUsage.CacheWriteTokens);
         _providerUsage.AddTokens(execution.ProviderId, execution.ModelId, inputTokens, outputTokens);
+        _providerUsage.AddCacheTokens(execution.ProviderId, execution.ModelId, cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
         _providerUsage.RecordTurn(
             session.Id,
             session.ChannelId,
@@ -717,6 +722,8 @@ public sealed class MafAgentRuntime : IAgentRuntime
             execution.ModelId,
             inputTokens,
             outputTokens,
+            cacheUsage.CacheReadTokens,
+            cacheUsage.CacheWriteTokens,
             LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, 0));
     }
 

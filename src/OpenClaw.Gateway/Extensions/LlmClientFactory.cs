@@ -86,6 +86,16 @@ public static class LlmClientFactory
                 .AsIChatClient(),
             "anthropic" or "claude" => CreateAnthropicClient(config)
                 .AsIChatClient(config.Model),
+            "anthropic-vertex" => CreateAnthropicClient(new LlmProviderConfig
+                {
+                    ApiKey = config.ApiKey,
+                    Endpoint = config.Endpoint
+                        ?? throw new InvalidOperationException(
+                            "Endpoint must be set for provider 'anthropic-vertex'. " +
+                            "Set OpenClaw:Llm:Endpoint or Models:Profiles:<id>:BaseUrl."),
+                    Model = config.Model
+                })
+                .AsIChatClient(config.Model),
             "gemini" or "google" => CreateGeminiClient(config),
             "ollama" => CreateOpenAiClient(new LlmProviderConfig
                 {
@@ -110,9 +120,19 @@ public static class LlmClientFactory
                 })
                 .GetChatClient(config.Model)
                 .AsIChatClient(),
+            "amazon-bedrock" => CreateAnthropicClient(new LlmProviderConfig
+                {
+                    ApiKey = config.ApiKey,
+                    Endpoint = config.Endpoint
+                        ?? throw new InvalidOperationException(
+                            "Endpoint must be set for provider 'amazon-bedrock'. " +
+                            "Use a Bedrock-compatible proxy endpoint or register a dynamic provider."),
+                    Model = config.Model
+                })
+                .AsIChatClient(config.Model),
             _ => throw new InvalidOperationException(
                 $"Unsupported LLM provider: {config.Provider}. " +
-                "Supported: openai, anthropic, claude, gemini, google, ollama, azure-openai, openai-compatible, groq, together, lmstudio")
+                "Supported: openai, anthropic, claude, anthropic-vertex, gemini, google, ollama, azure-openai, openai-compatible, groq, together, lmstudio, amazon-bedrock")
         };
     }
 
@@ -143,6 +163,7 @@ public static class LlmClientFactory
                     Model = config.Model,
                     Endpoint = config.Endpoint
                 }, embeddingModel!),
+            "anthropic-vertex" or "amazon-bedrock" => null,
             _ => null
         };
     }

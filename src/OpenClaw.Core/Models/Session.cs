@@ -16,6 +16,8 @@ public sealed class Session
 {
     private long _totalInputTokens;
     private long _totalOutputTokens;
+    private long _totalCacheReadTokens;
+    private long _totalCacheWriteTokens;
 
     public required string Id { get; init; }
     public required string ChannelId { get; init; }
@@ -69,6 +71,20 @@ public sealed class Session
         set => Interlocked.Exchange(ref _totalOutputTokens, value);
     }
 
+    /// <summary>Total input tokens served from upstream prompt cache across all turns.</summary>
+    public long TotalCacheReadTokens
+    {
+        get => Interlocked.Read(ref _totalCacheReadTokens);
+        set => Interlocked.Exchange(ref _totalCacheReadTokens, value);
+    }
+
+    /// <summary>Total input tokens written into upstream prompt cache across all turns.</summary>
+    public long TotalCacheWriteTokens
+    {
+        get => Interlocked.Read(ref _totalCacheWriteTokens);
+        set => Interlocked.Exchange(ref _totalCacheWriteTokens, value);
+    }
+
     /// <summary>Optional contract policy governing this session's execution limits.</summary>
     public ContractPolicy? ContractPolicy { get; set; }
 
@@ -91,6 +107,14 @@ public sealed class Session
             Interlocked.Add(ref _totalInputTokens, inputTokens);
         if (outputTokens != 0)
             Interlocked.Add(ref _totalOutputTokens, outputTokens);
+    }
+
+    public void AddCacheUsage(long cacheReadTokens, long cacheWriteTokens)
+    {
+        if (cacheReadTokens != 0)
+            Interlocked.Add(ref _totalCacheReadTokens, cacheReadTokens);
+        if (cacheWriteTokens != 0)
+            Interlocked.Add(ref _totalCacheWriteTokens, cacheWriteTokens);
     }
 
     public long GetTotalTokens()
@@ -135,6 +159,9 @@ public sealed record ToolInvocation
 [JsonSerializable(typeof(RuntimeConfig))]
 [JsonSerializable(typeof(GatewayRuntimeState))]
 [JsonSerializable(typeof(LlmProviderConfig))]
+[JsonSerializable(typeof(PromptCachingConfig))]
+[JsonSerializable(typeof(DiagnosticsConfig))]
+[JsonSerializable(typeof(PromptCacheTraceConfig))]
 [JsonSerializable(typeof(ModelsConfig))]
 [JsonSerializable(typeof(ModelProfileConfig))]
 [JsonSerializable(typeof(List<ModelProfileConfig>))]

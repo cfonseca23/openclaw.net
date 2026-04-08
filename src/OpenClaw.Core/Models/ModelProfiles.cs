@@ -17,6 +17,7 @@ public sealed class ModelProfileConfig
     public string[] FallbackProfileIds { get; set; } = [];
     public string[] FallbackModels { get; set; } = [];
     public ModelCapabilities? Capabilities { get; set; }
+    public PromptCachingConfig? PromptCaching { get; set; }
 }
 
 public sealed class ModelCapabilities
@@ -31,6 +32,10 @@ public sealed class ModelCapabilities
     public bool SupportsSystemMessages { get; set; } = true;
     public bool SupportsImageInput { get; set; }
     public bool SupportsAudioInput { get; set; }
+    public bool SupportsPromptCaching { get; set; }
+    public bool SupportsExplicitCacheRetention { get; set; }
+    public bool ReportsCacheReadTokens { get; set; }
+    public bool ReportsCacheWriteTokens { get; set; }
     public int MaxContextTokens { get; set; }
     public int MaxOutputTokens { get; set; }
 }
@@ -62,6 +67,7 @@ public sealed class ModelProfile
     public string[] FallbackProfileIds { get; init; } = [];
     public string[] FallbackModels { get; init; } = [];
     public required ModelCapabilities Capabilities { get; init; }
+    public PromptCachingConfig PromptCaching { get; init; } = new();
     public bool IsImplicit { get; init; }
 }
 
@@ -75,6 +81,7 @@ public sealed class ModelProfileStatus
     public bool IsAvailable { get; init; }
     public string[] Tags { get; init; } = [];
     public required ModelCapabilities Capabilities { get; init; }
+    public PromptCachingConfig PromptCaching { get; init; } = new();
     public string[] ValidationIssues { get; init; } = [];
     public string[] FallbackProfileIds { get; init; } = [];
     public string[] FallbackModels { get; init; } = [];

@@ -34,6 +34,7 @@ public sealed class GatewayConfig
     public TailscaleConfig Tailscale { get; set; } = new();
     public GmailPubSubConfig GmailPubSub { get; set; } = new();
     public MdnsConfig Mdns { get; set; } = new();
+    public DiagnosticsConfig Diagnostics { get; set; } = new();
     public string UsageFooter { get; set; } = "off"; // "off", "tokens", "full"
 
     public int MaxConcurrentSessions { get; set; } = 64;
@@ -94,6 +95,33 @@ public sealed class LlmProviderConfig
 
     /// <summary>Seconds the circuit breaker stays open before probing.</summary>
     public int CircuitBreakerCooldownSeconds { get; set; } = 30;
+
+    public PromptCachingConfig PromptCaching { get; set; } = new();
+}
+
+public sealed class PromptCachingConfig
+{
+    public bool? Enabled { get; set; }
+    public string? Retention { get; set; } // none | short | long | auto
+    public string? Dialect { get; set; } // auto | openai | anthropic | gemini | none
+    public bool? KeepWarmEnabled { get; set; }
+    public int KeepWarmIntervalMinutes { get; set; } = 55;
+    public bool? TraceEnabled { get; set; }
+    public string? TraceFilePath { get; set; }
+}
+
+public sealed class DiagnosticsConfig
+{
+    public PromptCacheTraceConfig CacheTrace { get; set; } = new();
+}
+
+public sealed class PromptCacheTraceConfig
+{
+    public bool Enabled { get; set; }
+    public string? FilePath { get; set; }
+    public bool IncludeMessages { get; set; } = true;
+    public bool IncludePrompt { get; set; } = true;
+    public bool IncludeSystem { get; set; } = true;
 }
 
 public sealed class MemoryConfig

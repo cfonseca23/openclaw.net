@@ -70,6 +70,8 @@ public sealed class ProviderTurnUsageEntry
     public required string ModelId { get; init; }
     public long InputTokens { get; init; }
     public long OutputTokens { get; init; }
+    public long CacheReadTokens { get; init; }
+    public long CacheWriteTokens { get; init; }
     public required InputTokenComponentEstimate EstimatedInputTokensByComponent { get; init; }
 }
 

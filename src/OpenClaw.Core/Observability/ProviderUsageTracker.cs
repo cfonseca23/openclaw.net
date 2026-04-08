@@ -28,6 +28,15 @@ public sealed class ProviderUsageTracker
             counter.AddOutputTokens(outputTokens);
     }
 
+    public void AddCacheTokens(string providerId, string modelId, long cacheReadTokens, long cacheWriteTokens)
+    {
+        var counter = GetCounter(providerId, modelId);
+        if (cacheReadTokens > 0)
+            counter.AddCacheReadTokens(cacheReadTokens);
+        if (cacheWriteTokens > 0)
+            counter.AddCacheWriteTokens(cacheWriteTokens);
+    }
+
     public IReadOnlyList<ProviderUsageSnapshot> Snapshot()
         => _usage
             .Select(static kvp => kvp.Value.Snapshot(kvp.Key.ProviderId, kvp.Key.ModelId))
@@ -42,6 +51,8 @@ public sealed class ProviderUsageTracker
         string modelId,
         long inputTokens,
         long outputTokens,
+        long cacheReadTokens,
+        long cacheWriteTokens,
         InputTokenComponentEstimate estimatedInputTokensByComponent)
     {
         _recentTurns.Enqueue(new ProviderTurnUsageEntry
@@ -52,6 +63,8 @@ public sealed class ProviderUsageTracker
             ModelId = string.IsNullOrWhiteSpace(modelId) ? "default" : modelId,
             InputTokens = inputTokens,
             OutputTokens = outputTokens,
+            CacheReadTokens = cacheReadTokens,
+            CacheWriteTokens = cacheWriteTokens,
             EstimatedInputTokensByComponent = estimatedInputTokensByComponent
         });
 
@@ -59,6 +72,25 @@ public sealed class ProviderUsageTracker
         {
         }
     }
+
+    public void RecordTurn(
+        string sessionId,
+        string channelId,
+        string providerId,
+        string modelId,
+        long inputTokens,
+        long outputTokens,
+        InputTokenComponentEstimate estimatedInputTokensByComponent)
+        => RecordTurn(
+            sessionId,
+            channelId,
+            providerId,
+            modelId,
+            inputTokens,
+            outputTokens,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            estimatedInputTokensByComponent);
 
     public IReadOnlyList<ProviderTurnUsageEntry> RecentTurns(string? sessionId = null, int limit = 50)
     {
@@ -71,6 +103,21 @@ public sealed class ProviderUsageTracker
             .ToArray();
 
         return items;
+    }
+
+    public (long CacheReadTokens, long CacheWriteTokens) GetLatestSessionCacheTotals(string? sessionId)
+    {
+        var latest = _recentTurns.ToArray()
+            .Where(item =>
+                !string.IsNullOrWhiteSpace(sessionId) &&
+                string.Equals(item.SessionId, sessionId, StringComparison.Ordinal) &&
+                (item.CacheReadTokens > 0 || item.CacheWriteTokens > 0))
+            .OrderByDescending(static item => item.TimestampUtc)
+            .FirstOrDefault();
+
+        return latest is null
+            ? (0, 0)
+            : (latest.CacheReadTokens, latest.CacheWriteTokens);
     }
 
     private UsageCounter GetCounter(string providerId, string modelId)
@@ -87,12 +134,16 @@ public sealed class ProviderUsageTracker
         private long _errors;
         private long _inputTokens;
         private long _outputTokens;
+        private long _cacheReadTokens;
+        private long _cacheWriteTokens;
 
         public void IncrementRequests() => Interlocked.Increment(ref _requests);
         public void IncrementRetries() => Interlocked.Increment(ref _retries);
         public void IncrementErrors() => Interlocked.Increment(ref _errors);
         public void AddInputTokens(long value) => Interlocked.Add(ref _inputTokens, value);
         public void AddOutputTokens(long value) => Interlocked.Add(ref _outputTokens, value);
+        public void AddCacheReadTokens(long value) => Interlocked.Add(ref _cacheReadTokens, value);
+        public void AddCacheWriteTokens(long value) => Interlocked.Add(ref _cacheWriteTokens, value);
 
         public ProviderUsageSnapshot Snapshot(string providerId, string modelId)
             => new()
@@ -103,7 +154,9 @@ public sealed class ProviderUsageTracker
                 Retries = Interlocked.Read(ref _retries),
                 Errors = Interlocked.Read(ref _errors),
                 InputTokens = Interlocked.Read(ref _inputTokens),
-                OutputTokens = Interlocked.Read(ref _outputTokens)
+                OutputTokens = Interlocked.Read(ref _outputTokens),
+                CacheReadTokens = Interlocked.Read(ref _cacheReadTokens),
+                CacheWriteTokens = Interlocked.Read(ref _cacheWriteTokens)
             };
     }
 }
@@ -117,4 +170,6 @@ public sealed class ProviderUsageSnapshot
     public long Errors { get; init; }
     public long InputTokens { get; init; }
     public long OutputTokens { get; init; }
+    public long CacheReadTokens { get; init; }
+    public long CacheWriteTokens { get; init; }
 }
