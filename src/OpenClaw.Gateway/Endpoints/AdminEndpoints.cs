@@ -14,6 +14,7 @@ using OpenClaw.Core.Security;
 using OpenClaw.Gateway;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Composition;
+using OpenClaw.Gateway.Models;
 using QRCoder;
 
 namespace OpenClaw.Gateway.Endpoints;
@@ -35,8 +36,14 @@ internal static class AdminEndpoints
         var automationService = FeatureFallbackServices.ResolveAutomationService(startup, app.Services, heartbeat, fallbackFeatureStore);
         var learningService = FeatureFallbackServices.ResolveLearningService(startup, app.Services, fallbackFeatureStore);
         var facade = IntegrationApiFacade.Create(startup, runtime, app.Services);
-        var sessionAdminStore = (ISessionAdminStore)app.Services.GetRequiredService<IMemoryStore>();
+        var sessionAdminStore = app.Services.GetRequiredService<ISessionAdminStore>();
         var operations = runtime.Operations;
+        var modelEvaluationRunner = app.Services.GetService<ModelEvaluationRunner>()
+            ?? new ModelEvaluationRunner(
+                operations.ModelProfiles as ConfiguredModelProfileRegistry
+                    ?? new ConfiguredModelProfileRegistry(startup.Config, NullLogger<ConfiguredModelProfileRegistry>.Instance),
+                startup.Config,
+                NullLogger<ModelEvaluationRunner>.Instance);
 
         app.MapGet("/auth/session", (HttpContext ctx) =>
         {
@@ -261,9 +268,15 @@ internal static class AdminEndpoints
             };
 
             var metadataById = operations.SessionMetadata.GetAll();
-            var persisted = await sessionAdminStore.ListSessionsAsync(page, pageSize, query, ctx.RequestAborted);
+            var persisted = await SessionAdminPersistedListing.ListPersistedAsync(
+                sessionAdminStore,
+                page,
+                pageSize,
+                query,
+                metadataById,
+                ctx.RequestAborted);
             var active = (await runtime.SessionManager.ListActiveAsync(ctx.RequestAborted))
-                .Where(session => MatchesSessionQuery(session, query, metadataById))
+                .Where(session => SessionAdminQuery.MatchesSessionQuery(session, query, metadataById))
                 .OrderByDescending(static session => session.LastActiveAt)
                 .Select(static session => new SessionSummary
                 {
@@ -280,21 +293,11 @@ internal static class AdminEndpoints
                 })
                 .ToArray();
 
-            var persistedFiltered = new PagedSessionList
-            {
-                Page = persisted.Page,
-                PageSize = persisted.PageSize,
-                HasMore = persisted.HasMore,
-                Items = persisted.Items
-                    .Where(item => MatchesSummaryQuery(item, query, metadataById))
-                    .ToArray()
-            };
-
             return Results.Json(new AdminSessionsResponse
             {
                 Filters = query,
                 Active = active,
-                Persisted = persistedFiltered
+                Persisted = persisted
             }, CoreJsonContext.Default.AdminSessionsResponse);
         });
 
@@ -455,13 +458,13 @@ internal static class AdminEndpoints
             return Results.Json(response, CoreJsonContext.Default.AdminSettingsResponse);
         });
 
-        app.MapGet("/admin/heartbeat", (HttpContext ctx) =>
+        app.MapGet("/admin/heartbeat", async (HttpContext ctx) =>
         {
             var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.heartbeat");
             if (authResult.Failure is not null)
                 return authResult.Failure;
 
-            var preview = heartbeat.BuildPreview(heartbeat.LoadConfig(), runtime, ctx.RequestAborted);
+            var preview = await heartbeat.BuildPreviewAsync(heartbeat.LoadConfig(), runtime, ctx.RequestAborted);
             return Results.Json(preview, CoreJsonContext.Default.HeartbeatPreviewResponse);
         });
 
@@ -485,7 +488,7 @@ internal static class AdminEndpoints
                 });
             }
 
-            var preview = heartbeat.BuildPreview(request, runtime, ctx.RequestAborted);
+            var preview = await heartbeat.BuildPreviewAsync(request, runtime, ctx.RequestAborted);
             return Results.Json(preview, CoreJsonContext.Default.HeartbeatPreviewResponse);
         });
 
@@ -511,7 +514,7 @@ internal static class AdminEndpoints
             }
 
             var before = heartbeat.LoadConfig();
-            var preview = heartbeat.BuildPreview(request, runtime, ctx.RequestAborted);
+            var preview = await heartbeat.BuildPreviewAsync(request, runtime, ctx.RequestAborted);
             var hasErrors = preview.Issues.Any(static issue => string.Equals(issue.Severity, "error", StringComparison.OrdinalIgnoreCase));
             if (hasErrors)
             {
@@ -520,18 +523,18 @@ internal static class AdminEndpoints
             }
 
             var saved = heartbeat.SaveConfig(request);
-            var savedPreview = heartbeat.BuildPreview(saved, runtime, ctx.RequestAborted);
+            var savedPreview = await heartbeat.BuildPreviewAsync(saved, runtime, ctx.RequestAborted);
             RecordOperatorAudit(ctx, operations, auth, "heartbeat_save", "heartbeat.default", "Saved managed heartbeat configuration.", success: true, before, after: saved);
             return Results.Json(savedPreview, CoreJsonContext.Default.HeartbeatPreviewResponse);
         });
 
-        app.MapGet("/admin/heartbeat/status", (HttpContext ctx) =>
+        app.MapGet("/admin/heartbeat/status", async (HttpContext ctx) =>
         {
             var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.heartbeat.status");
             if (authResult.Failure is not null)
                 return authResult.Failure;
 
-            var status = heartbeat.BuildStatus(runtime, ctx.RequestAborted);
+            var status = await heartbeat.BuildStatusAsync(runtime, ctx.RequestAborted);
             return Results.Json(status, CoreJsonContext.Default.HeartbeatStatusResponse);
         });
 
@@ -786,11 +789,55 @@ internal static class AdminEndpoints
 
             return Results.Json(new ProviderAdminResponse
             {
+                ModelProfiles = new ModelProfilesStatusResponse
+                {
+                    DefaultProfileId = operations.ModelProfiles.DefaultProfileId,
+                    Profiles = operations.ModelProfiles.ListStatuses()
+                },
                 Routes = operations.LlmExecution.SnapshotRoutes(),
                 Usage = runtime.ProviderUsage.Snapshot(),
                 Policies = operations.ProviderPolicies.List(),
                 RecentTurns = runtime.ProviderUsage.RecentTurns(limit: 50)
             }, CoreJsonContext.Default.ProviderAdminResponse);
+        });
+
+        app.MapGet("/admin/models", (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.models");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            return Results.Json(
+                new ModelProfilesStatusResponse
+                {
+                    DefaultProfileId = operations.ModelProfiles.DefaultProfileId,
+                    Profiles = operations.ModelProfiles.ListStatuses()
+                },
+                CoreJsonContext.Default.ModelProfilesStatusResponse);
+        });
+
+        app.MapGet("/admin/models/doctor", (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.models.doctor");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            return Results.Json(modelEvaluationRunner.BuildDoctor(), CoreJsonContext.Default.ModelSelectionDoctorResponse);
+        });
+
+        app.MapPost("/admin/models/evaluations", async (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.models.evaluate");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            var requestPayload = await ReadJsonBodyAsync(ctx, CoreJsonContext.Default.ModelEvaluationRequest);
+            if (requestPayload.Failure is not null)
+                return requestPayload.Failure;
+
+            var request = requestPayload.Value ?? new ModelEvaluationRequest();
+            var report = await modelEvaluationRunner.RunAsync(request, ctx.RequestAborted);
+            return Results.Json(report, CoreJsonContext.Default.ModelEvaluationReport);
         });
 
         app.MapGet("/admin/providers/policies", (HttpContext ctx) =>
@@ -969,9 +1016,13 @@ internal static class AdminEndpoints
             };
 
             var metadataById = operations.SessionMetadata.GetAll();
-            var persisted = await sessionAdminStore.ListSessionsAsync(1, 200, query, ctx.RequestAborted);
+            var summaries = await SessionAdminPersistedListing.ListAllMatchingSummariesAsync(
+                sessionAdminStore,
+                query,
+                metadataById,
+                ctx.RequestAborted);
             var items = new List<SessionExportItem>();
-            foreach (var summary in persisted.Items.Where(item => MatchesSummaryQuery(item, query, metadataById)))
+            foreach (var summary in summaries)
             {
                 var session = await runtime.SessionManager.LoadAsync(summary.Id, ctx.RequestAborted);
                 if (session is null)
@@ -2006,94 +2057,6 @@ internal static class AdminEndpoints
         return Enum.TryParse<SessionState>(value, ignoreCase: true, out var state)
             ? state
             : null;
-    }
-
-    private static bool MatchesSessionQuery(
-        Session session,
-        SessionListQuery query,
-        IReadOnlyDictionary<string, SessionMetadataSnapshot> metadataById)
-    {
-        if (!string.IsNullOrWhiteSpace(query.ChannelId) &&
-            !string.Equals(session.ChannelId, query.ChannelId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.SenderId) &&
-            !string.Equals(session.SenderId, query.SenderId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (query.FromUtc is { } fromUtc && session.LastActiveAt < fromUtc)
-            return false;
-
-        if (query.ToUtc is { } toUtc && session.LastActiveAt > toUtc)
-            return false;
-
-        if (query.State is { } state && session.State != state)
-            return false;
-
-        var metadata = metadataById.TryGetValue(session.Id, out var storedMetadata)
-            ? storedMetadata
-            : new SessionMetadataSnapshot { SessionId = session.Id, Starred = false, Tags = [] };
-
-        if (query.Starred is { } starred && metadata.Starred != starred)
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.Tag) &&
-            !metadata.Tags.Contains(query.Tag, StringComparer.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(query.Search))
-            return true;
-
-        return session.Id.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || session.ChannelId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || session.SenderId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || metadata.Tags.Any(tag => tag.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static bool MatchesSummaryQuery(
-        SessionSummary summary,
-        SessionListQuery query,
-        IReadOnlyDictionary<string, SessionMetadataSnapshot> metadataById)
-    {
-        if (!string.IsNullOrWhiteSpace(query.ChannelId) &&
-            !string.Equals(summary.ChannelId, query.ChannelId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.SenderId) &&
-            !string.Equals(summary.SenderId, query.SenderId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (query.FromUtc is { } fromUtc && summary.LastActiveAt < fromUtc)
-            return false;
-
-        if (query.ToUtc is { } toUtc && summary.LastActiveAt > toUtc)
-            return false;
-
-        if (query.State is { } state && summary.State != state)
-            return false;
-
-        var metadata = metadataById.TryGetValue(summary.Id, out var storedMetadata)
-            ? storedMetadata
-            : new SessionMetadataSnapshot { SessionId = summary.Id, Starred = false, Tags = [] };
-
-        if (query.Starred is { } starred && metadata.Starred != starred)
-            return false;
-
-        if (!string.IsNullOrWhiteSpace(query.Tag) &&
-            !metadata.Tags.Contains(query.Tag, StringComparer.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(query.Search))
-            return true;
-
-        return summary.Id.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || summary.ChannelId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || summary.SenderId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-            || metadata.Tags.Any(tag => tag.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string BuildTranscript(Session session)

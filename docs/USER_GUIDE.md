@@ -77,10 +77,22 @@ OpenClaw supports native routing for several providers out-of-the-box. Change th
 - **Default Endpoint**: `http://localhost:11434/v1`
 - **Notes**: OpenClaw connects to Ollama's OpenAI-compatible endpoint automatically.
 
-#### 4. Anthropic / Google / Groq / Together AI
-- **Provider**: `"anthropic"`, `"google"`, `"groq"`, `"together"`
-- **Required**: `ApiKey`, `Model`, and `Endpoint`
-- **Notes**: These providers are accessed via the OpenAI-compatible REST abstractions. Ensure that you provide the proper base API URL as the `Endpoint`.
+#### 4. Claude / Anthropic
+- **Provider**: `"anthropic"` or `"claude"`
+- **Required**: `ApiKey` and `Model`
+- **Optional**: `Endpoint`
+- **Notes**: This uses the native Anthropic client. You only need `Endpoint` when routing through a proxy or compatible gateway.
+
+#### 5. Gemini / Google
+- **Provider**: `"gemini"` or `"google"`
+- **Required**: `ApiKey` and `Model`
+- **Optional**: `Endpoint`
+- **Notes**: This uses the native Gemini client for chat and embeddings. You only need `Endpoint` when routing through a proxy or compatible gateway.
+
+#### 6. Groq / Together AI / LM Studio / OpenAI-compatible
+- **Provider**: `"groq"`, `"together"`, `"lmstudio"`, or `"openai-compatible"`
+- **Required**: `ApiKey`, `Model`, and usually `Endpoint`
+- **Notes**: These providers are accessed via the OpenAI-compatible REST abstractions. Ensure that you provide the proper base API URL as the `Endpoint` when required by the target service.
 
 ---
 

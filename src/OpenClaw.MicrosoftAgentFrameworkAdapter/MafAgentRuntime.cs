@@ -39,6 +39,10 @@ public sealed class MafAgentRuntime : IAgentRuntime
     private readonly long _sessionTokenBudget;
     private readonly MemoryRecallConfig? _recall;
     private readonly bool _requireToolApproval;
+    private readonly Action<Session, string, string, long, long>? _recordContractTurnUsage;
+    private readonly Func<Session, bool>? _isContractTokenBudgetExceeded;
+    private readonly Func<Session, bool>? _isContractRuntimeBudgetExceeded;
+    private readonly Action<Session, string>? _appendContractSnapshot;
     private readonly object _skillGate = new();
     private readonly IList<AITool> _mafTools;
     private string _systemPrompt = string.Empty;
@@ -85,6 +89,10 @@ public sealed class MafAgentRuntime : IAgentRuntime
         _sessionTokenBudget = context.Config.SessionTokenBudget;
         _recall = context.Config.Memory.Recall;
         _requireToolApproval = context.RequireToolApproval;
+        _recordContractTurnUsage = context.RecordContractTurnUsage;
+        _isContractTokenBudgetExceeded = context.IsContractTokenBudgetExceeded;
+        _isContractRuntimeBudgetExceeded = context.IsContractRuntimeBudgetExceeded;
+        _appendContractSnapshot = context.AppendContractSnapshot;
         _chatClient = new MafExecutionServiceChatClient(
             context.LlmExecutionService,
             context.RuntimeMetrics,
@@ -151,7 +159,14 @@ public sealed class MafAgentRuntime : IAgentRuntime
             session.Id,
             session.ChannelId);
 
-        if (_sessionTokenBudget > 0 && (session.TotalInputTokens + session.TotalOutputTokens) >= _sessionTokenBudget)
+        if (TryRejectContractBudget(session, out var contractBudgetMessage))
+        {
+            AppendContractSnapshot(session, "budget_exceeded");
+            LogTurnComplete(turnCtx);
+            return contractBudgetMessage;
+        }
+
+        if (_sessionTokenBudget > 0 && session.GetTotalTokens() >= _sessionTokenBudget)
         {
             LogTurnComplete(turnCtx);
             return "You've reached the token limit for this session. Please start a new conversation.";
@@ -181,6 +196,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 SkillPromptLength = _skillPromptLength,
                 SessionTokenBudget = _sessionTokenBudget,
                 ToolInvocations = toolInvocations,
+                RecordContractTurnUsage = _recordContractTurnUsage,
                 ApprovalCallback = approvalCallback
             });
 
@@ -209,12 +225,26 @@ public sealed class MafAgentRuntime : IAgentRuntime
 
             await _sessionStateStore.SaveAsync(agent, session, mafSession, ct);
 
+            if (TryRejectContractBudget(session, out contractBudgetMessage))
+            {
+                AppendContractSnapshot(session, "budget_exceeded");
+                LogTurnComplete(turnCtx);
+                return contractBudgetMessage;
+            }
+
+            AppendContractSnapshot(session, "active");
             LogTurnComplete(turnCtx);
             return text;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (ModelSelectionException ex)
+        {
+            _logger?.LogWarning("[{CorrelationId}] MAF model selection failed: {Message}", turnCtx.CorrelationId, ex.Message);
+            LogTurnComplete(turnCtx);
+            return ex.Message;
         }
         catch (Exception ex)
         {
@@ -248,7 +278,16 @@ public sealed class MafAgentRuntime : IAgentRuntime
             session.Id,
             session.ChannelId);
 
-        if (_sessionTokenBudget > 0 && (session.TotalInputTokens + session.TotalOutputTokens) >= _sessionTokenBudget)
+        if (TryRejectContractBudget(session, out var contractBudgetMessage))
+        {
+            yield return AgentStreamEvent.ErrorOccurred(contractBudgetMessage, "contract_budget_exceeded");
+            yield return AgentStreamEvent.Complete();
+            AppendContractSnapshot(session, "budget_exceeded");
+            LogTurnComplete(turnCtx);
+            yield break;
+        }
+
+        if (_sessionTokenBudget > 0 && session.GetTotalTokens() >= _sessionTokenBudget)
         {
             yield return AgentStreamEvent.ErrorOccurred(
                 "You've reached the token limit for this session. Please start a new conversation.",
@@ -324,6 +363,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 SkillPromptLength = _skillPromptLength,
                 SessionTokenBudget = _sessionTokenBudget,
                 ToolInvocations = toolInvocations,
+                RecordContractTurnUsage = _recordContractTurnUsage,
                 ApprovalCallback = approvalCallback,
                 StreamEventWriter = WriteStreamEventAsync
             });
@@ -359,6 +399,15 @@ public sealed class MafAgentRuntime : IAgentRuntime
 
             await _sessionStateStore.SaveAsync(agent, session, mafSession, ct);
 
+            if (TryRejectContractBudget(session, out var contractBudgetMessage))
+            {
+                await writer.WriteAsync(AgentStreamEvent.ErrorOccurred(contractBudgetMessage, "contract_budget_exceeded"), ct);
+                await writer.WriteAsync(AgentStreamEvent.Complete(), ct);
+                AppendContractSnapshot(session, "budget_exceeded");
+                return;
+            }
+
+            AppendContractSnapshot(session, "active");
             await writer.WriteAsync(AgentStreamEvent.Complete(), ct);
             LogTurnComplete(turnCtx);
         }
@@ -366,6 +415,19 @@ public sealed class MafAgentRuntime : IAgentRuntime
         {
             writer.TryComplete();
             throw;
+        }
+        catch (ModelSelectionException ex)
+        {
+            _logger?.LogWarning("[{CorrelationId}] MAF streaming model selection failed: {Message}", turnCtx.CorrelationId, ex.Message);
+            try
+            {
+                await writer.WriteAsync(AgentStreamEvent.ErrorOccurred(ex.Message, "model_selection_failed"), ct);
+                await writer.WriteAsync(AgentStreamEvent.Complete(), ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
         }
         catch (Exception ex)
         {
@@ -630,8 +692,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         var outputTokens = execution.Response.Usage?.OutputTokenCount
             ?? LlmExecutionEstimateBuilder.EstimateTokenCount(execution.Response.Text?.Length ?? 0);
 
-        session.TotalInputTokens += inputTokens;
-        session.TotalOutputTokens += outputTokens;
+        session.AddTokenUsage(inputTokens, outputTokens);
         turnContext.RecordLlmCall(elapsed, inputTokens, outputTokens);
         _metrics.IncrementLlmCalls();
         _metrics.AddInputTokens(inputTokens);
@@ -681,5 +742,34 @@ public sealed class MafAgentRuntime : IAgentRuntime
             "[{CorrelationId}] MAF turn complete: {Summary}",
             turnCtx.CorrelationId,
             turnCtx.ToString());
+    }
+
+    private bool TryRejectContractBudget(Session session, out string message)
+    {
+        message = string.Empty;
+        if (session.ContractPolicy is null)
+            return false;
+
+        if (_isContractRuntimeBudgetExceeded?.Invoke(session) == true)
+        {
+            message = "This contract has expired and can no longer execute new work.";
+            return true;
+        }
+
+        if (_isContractTokenBudgetExceeded?.Invoke(session) == true)
+        {
+            message = "This contract has reached its token budget and cannot continue.";
+            return true;
+        }
+
+        return false;
+    }
+
+    private void AppendContractSnapshot(Session session, string status)
+    {
+        if (session.ContractPolicy is null)
+            return;
+
+        _appendContractSnapshot?.Invoke(session, status);
     }
 }

@@ -12,6 +12,7 @@ using OpenClaw.Core.Security;
 using OpenClaw.Core.Sessions;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Extensions;
+using OpenClaw.Gateway.Models;
 
 namespace OpenClaw.Gateway.Composition;
 
@@ -30,12 +31,22 @@ internal static class CoreServicesExtensions
             new AllowlistManager(config.Memory.StoragePath, sp.GetRequiredService<ILogger<AllowlistManager>>()));
 
         services.AddSingleton<IMemoryStore>(_ => CreateMemoryStore(config));
+        services.AddSingleton<ISessionAdminStore>(sp =>
+        {
+            var memory = sp.GetRequiredService<IMemoryStore>();
+            return memory as ISessionAdminStore
+                ?? throw new InvalidOperationException($"{memory.GetType().Name} must implement ISessionAdminStore.");
+        });
         services.AddSingleton<ISessionSearchStore>(sp => (ISessionSearchStore)sp.GetRequiredService<IMemoryStore>());
         AddFeatureStores(services, config);
         services.AddSingleton<RuntimeMetrics>();
         services.AddSingleton<ProviderUsageTracker>();
         services.AddSingleton<ToolUsageTracker>();
         services.AddSingleton<LlmProviderRegistry>();
+        services.AddSingleton<ConfiguredModelProfileRegistry>();
+        services.AddSingleton<IModelProfileRegistry>(sp => sp.GetRequiredService<ConfiguredModelProfileRegistry>());
+        services.AddSingleton<IModelSelectionPolicy, DefaultModelSelectionPolicy>();
+        services.AddSingleton<ModelEvaluationRunner>();
         services.AddSingleton<ProviderPolicyService>(sp =>
             new ProviderPolicyService(
                 config.Memory.StoragePath,

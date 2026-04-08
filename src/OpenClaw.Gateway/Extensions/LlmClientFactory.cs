@@ -2,6 +2,9 @@ using System;
 using System.Collections.Concurrent;
 using System.ClientModel;
 using System.ClientModel.Primitives;
+using Anthropic;
+using GeminiDotnet;
+using GeminiDotnet.Extensions.AI;
 using Microsoft.Extensions.AI;
 using OpenClaw.Core.Models;
 
@@ -81,6 +84,9 @@ public static class LlmClientFactory
             "openai" => CreateOpenAiClient(config)
                 .GetChatClient(config.Model)
                 .AsIChatClient(),
+            "anthropic" or "claude" => CreateAnthropicClient(config)
+                .AsIChatClient(config.Model),
+            "gemini" or "google" => CreateGeminiClient(config),
             "ollama" => CreateOpenAiClient(new LlmProviderConfig
                 {
                     ApiKey = config.ApiKey ?? "ollama",
@@ -92,7 +98,7 @@ public static class LlmClientFactory
             "azure-openai" => CreateAzureOpenAiClient(config)
                 .GetChatClient(config.Model)
                 .AsIChatClient(),
-            "openai-compatible" or "anthropic" or "google" or "groq" or "together" or "lmstudio" =>
+            "openai-compatible" or "groq" or "together" or "lmstudio" =>
                 CreateOpenAiClient(new LlmProviderConfig
                 {
                     ApiKey = config.ApiKey,
@@ -106,7 +112,7 @@ public static class LlmClientFactory
                 .AsIChatClient(),
             _ => throw new InvalidOperationException(
                 $"Unsupported LLM provider: {config.Provider}. " +
-                "Supported: openai, ollama, azure-openai, openai-compatible, anthropic, google, groq, together, lmstudio")
+                "Supported: openai, anthropic, claude, gemini, google, ollama, azure-openai, openai-compatible, groq, together, lmstudio")
         };
     }
 
@@ -129,7 +135,8 @@ public static class LlmClientFactory
                 Endpoint = config.Endpoint ?? "http://localhost:11434/v1",
                 Model = config.Model
             }, embeddingModel!),
-            "openai-compatible" or "anthropic" or "google" or "groq" or "together" or "lmstudio" =>
+            "gemini" or "google" => CreateGeminiEmbeddingClient(config, embeddingModel!),
+            "openai-compatible" or "groq" or "together" or "lmstudio" =>
                 CreateOpenAiEmbeddingClient(new LlmProviderConfig
                 {
                     ApiKey = config.ApiKey,
@@ -138,6 +145,40 @@ public static class LlmClientFactory
                 }, embeddingModel!),
             _ => null
         };
+    }
+
+    private static IChatClient CreateGeminiClient(LlmProviderConfig llm)
+    {
+        if (string.IsNullOrWhiteSpace(llm.ApiKey))
+            throw new InvalidOperationException("MODEL_PROVIDER_KEY must be set for the Gemini provider.");
+
+        var options = new GeminiClientOptions
+        {
+            ApiKey = llm.ApiKey
+        };
+
+        if (!string.IsNullOrWhiteSpace(llm.Endpoint))
+            options.Endpoint = new Uri(llm.Endpoint, UriKind.Absolute);
+
+        return new GeminiChatClient(options);
+    }
+
+    private static IEmbeddingGenerator<string, Embedding<float>> CreateGeminiEmbeddingClient(
+        LlmProviderConfig llm,
+        string embeddingModel)
+    {
+        if (string.IsNullOrWhiteSpace(llm.ApiKey))
+            throw new InvalidOperationException("MODEL_PROVIDER_KEY must be set for the Gemini provider.");
+
+        var options = new GeminiClientOptions
+        {
+            ApiKey = llm.ApiKey
+        };
+
+        if (!string.IsNullOrWhiteSpace(llm.Endpoint))
+            options.Endpoint = new Uri(llm.Endpoint, UriKind.Absolute);
+
+        return new GeminiEmbeddingGenerator(options);
     }
 
     private static IEmbeddingGenerator<string, Embedding<float>> CreateOpenAiEmbeddingClient(
@@ -168,6 +209,26 @@ public static class LlmClientFactory
 
         var transport = CreateTransportOptions(llm.Endpoint);
         return new OpenAI.OpenAIClient(new ApiKeyCredential(llm.ApiKey), CreateOpenAiClientOptions(transport));
+    }
+
+    private static IAnthropicClient CreateAnthropicClient(LlmProviderConfig llm)
+    {
+        if (string.IsNullOrWhiteSpace(llm.ApiKey))
+            throw new InvalidOperationException("MODEL_PROVIDER_KEY must be set for the Anthropic provider.");
+
+        if (string.IsNullOrWhiteSpace(llm.Endpoint))
+        {
+            return new AnthropicClient
+            {
+                ApiKey = llm.ApiKey
+            };
+        }
+
+        return new AnthropicClient
+        {
+            ApiKey = llm.ApiKey,
+            BaseUrl = llm.Endpoint
+        };
     }
 
     internal static LlmClientTransportOptions CreateTransportOptions(string? endpoint)

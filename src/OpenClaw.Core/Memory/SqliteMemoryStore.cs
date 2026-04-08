@@ -336,17 +336,25 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
                     cmd.Parameters.AddWithValue("$limit", widerLimit);
 
                     var candidates = new List<(string Key, string Content, DateTimeOffset UpdatedAt, double Bm25, byte[]? EmbeddingBlob)>();
-                    await using var reader = await cmd.ExecuteReaderAsync(ct);
-                    while (await reader.ReadAsync(ct))
+                    try
                     {
-                        var embBlob = reader.IsDBNull(4) ? null : (byte[])reader.GetValue(4);
-                        candidates.Add((
-                            reader.GetString(0),
-                            reader.GetString(1),
-                            DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(2)),
-                            reader.GetDouble(3),
-                            embBlob
-                        ));
+                        await using var reader = await cmd.ExecuteReaderAsync(ct);
+                        while (await reader.ReadAsync(ct))
+                        {
+                            var embBlob = reader.IsDBNull(4) ? null : (byte[])reader.GetValue(4);
+                            candidates.Add((
+                                reader.GetString(0),
+                                reader.GetString(1),
+                                DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(2)),
+                                reader.GetDouble(3),
+                                embBlob
+                            ));
+                        }
+                    }
+                    catch (SqliteException)
+                    {
+                        // Malformed FTS5 query syntax; treat as no matches.
+                        return [];
                     }
 
                     if (candidates.Count == 0)
@@ -401,21 +409,28 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
                 cmd.Parameters.AddWithValue("$limit", limit);
 
                 var hits = new List<MemoryNoteHit>();
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
+                try
                 {
-                    var key = reader.GetString(0);
-                    var content = reader.GetString(1);
-                    var updatedAt = reader.GetInt64(2);
-                    var rank = reader.GetDouble(3);
-
-                    hits.Add(new MemoryNoteHit
+                    await using var reader = await cmd.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct))
                     {
-                        Key = key,
-                        Content = content,
-                        UpdatedAt = DateTimeOffset.FromUnixTimeSeconds(updatedAt),
-                        Score = (float)(-rank)
-                    });
+                        var key = reader.GetString(0);
+                        var content = reader.GetString(1);
+                        var updatedAt = reader.GetInt64(2);
+                        var rank = reader.GetDouble(3);
+
+                        hits.Add(new MemoryNoteHit
+                        {
+                            Key = key,
+                            Content = content,
+                            UpdatedAt = DateTimeOffset.FromUnixTimeSeconds(updatedAt),
+                            Score = (float)(-rank)
+                        });
+                    }
+                }
+                catch (SqliteException)
+                {
+                    return [];
                 }
                 return hits;
             }
@@ -724,7 +739,11 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
         }
 
         if (pendingDeletes.Count > 0)
+        {
+            if (_ftsEnabled)
+                await DeleteSessionSearchRowsAsync(conn, pendingDeletes, ct);
             result.DeletedSessions += await DeleteSessionsByIdAsync(conn, pendingDeletes, ct);
+        }
 
         return remaining;
     }
@@ -739,19 +758,20 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
         if (remaining <= 0)
             return 0;
 
-        var cutoff = request.BranchExpiresBeforeUtc.ToUnixTimeSeconds();
+        var cutoffIso = request.BranchExpiresBeforeUtc.ToString("O");
+        var scanLimit = Math.Min(Math.Max(remaining * 4, remaining), 20_000);
         var pendingDeletes = new List<string>(capacity: Math.Min(remaining, 256));
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT branch_id, json
             FROM branches
-            WHERE updated_at < $cutoff
-            ORDER BY updated_at ASC
+            WHERE json_extract(json, '$.createdAt') < $cutoff
+            ORDER BY json_extract(json, '$.createdAt') ASC
             LIMIT $limit;
             """;
-        cmd.Parameters.AddWithValue("$cutoff", cutoff);
-        cmd.Parameters.AddWithValue("$limit", remaining);
+        cmd.Parameters.AddWithValue("$cutoff", cutoffIso);
+        cmd.Parameters.AddWithValue("$limit", scanLimit);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
@@ -766,6 +786,25 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
 
             var branchId = reader.GetString(0);
             var payloadJson = reader.GetString(1);
+
+            SessionBranch? branch;
+            try
+            {
+                branch = JsonSerializer.Deserialize(payloadJson, CoreJsonContext.Default.SessionBranch);
+            }
+            catch
+            {
+                branch = null;
+            }
+
+            if (branch is null)
+            {
+                result.SkippedCorruptBranchItems++;
+                continue;
+            }
+
+            if (branch.CreatedAt >= request.BranchExpiresBeforeUtc)
+                continue;
 
             result.EligibleBranches++;
             remaining--;
@@ -803,6 +842,22 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
             result.DeletedBranches += await DeleteBranchesByIdAsync(conn, pendingDeletes, ct);
 
         return remaining;
+    }
+
+    private async ValueTask DeleteSessionSearchRowsAsync(
+        SqliteConnection conn,
+        IReadOnlyList<string> sessionIds,
+        CancellationToken ct)
+    {
+        if (!_ftsEnabled || sessionIds.Count == 0)
+            return;
+
+        await DeleteByIdInBatchesAsync(conn, sessionIds, ct, static (cmd, sessionId) =>
+        {
+            cmd.CommandText = "DELETE FROM session_turns_fts WHERE session_id = $id;";
+            cmd.Parameters.Clear();
+            cmd.Parameters.AddWithValue("$id", sessionId);
+        });
     }
 
     private static async ValueTask<int> DeleteSessionsByIdAsync(
@@ -944,7 +999,9 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        // Clear only the pool for this instance's database, not all pools globally.
+        using var conn = new SqliteConnection(ConnectionString);
+        SqliteConnection.ClearPool(conn);
     }
 
     // ── ISessionAdminStore ────────────────────────────────────────────────
@@ -1048,29 +1105,55 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
             await using var conn = new SqliteConnection(ConnectionString);
             await conn.OpenAsync(ct);
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
+            var sql = new System.Text.StringBuilder("""
                 SELECT session_id, channel_id, sender_id, role, timestamp, snippet(session_turns_fts, 4, '<<', '>>', '...', 16), bm25(session_turns_fts) AS rank
                 FROM session_turns_fts
                 WHERE session_turns_fts MATCH $q
-                ORDER BY rank ASC
-                LIMIT $limit;
-                """;
+                """);
+            if (!string.IsNullOrWhiteSpace(query.ChannelId))
+                sql.AppendLine("  AND channel_id = $channelId");
+            if (!string.IsNullOrWhiteSpace(query.SenderId))
+                sql.AppendLine("  AND sender_id = $senderId");
+            if (query.FromUtc is not null)
+                sql.AppendLine("  AND timestamp >= $fromUtc");
+            if (query.ToUtc is not null)
+                sql.AppendLine("  AND timestamp <= $toUtc");
+            sql.AppendLine();
+            sql.AppendLine("ORDER BY rank ASC");
+            sql.AppendLine("LIMIT $limit;");
+            cmd.CommandText = sql.ToString();
             cmd.Parameters.AddWithValue("$q", query.Text);
+            if (!string.IsNullOrWhiteSpace(query.ChannelId))
+                cmd.Parameters.AddWithValue("$channelId", query.ChannelId);
+            if (!string.IsNullOrWhiteSpace(query.SenderId))
+                cmd.Parameters.AddWithValue("$senderId", query.SenderId);
+            if (query.FromUtc is not null)
+                cmd.Parameters.AddWithValue("$fromUtc", query.FromUtc.Value.ToUnixTimeSeconds());
+            if (query.ToUtc is not null)
+                cmd.Parameters.AddWithValue("$toUtc", query.ToUtc.Value.ToUnixTimeSeconds());
             cmd.Parameters.AddWithValue("$limit", Math.Clamp(query.Limit, 1, 200));
             var hits = new List<SessionSearchHit>();
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+            try
             {
-                hits.Add(new SessionSearchHit
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
                 {
-                    SessionId = reader.GetString(0),
-                    ChannelId = reader.GetString(1),
-                    SenderId = reader.GetString(2),
-                    Role = reader.GetString(3),
-                    Timestamp = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(4)),
-                    Snippet = reader.GetString(5),
-                    Score = (float)(-reader.GetDouble(6))
-                });
+                    hits.Add(new SessionSearchHit
+                    {
+                        SessionId = reader.GetString(0),
+                        ChannelId = reader.GetString(1),
+                        SenderId = reader.GetString(2),
+                        Role = reader.GetString(3),
+                        Timestamp = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(4)),
+                        Snippet = reader.GetString(5),
+                        Score = (float)(-reader.GetDouble(6))
+                    });
+                }
+            }
+            catch (SqliteException)
+            {
+                // Malformed FTS5 query syntax; treat as no matches.
+                return new SessionSearchResult { Query = query, Items = [] };
             }
 
             return new SessionSearchResult
@@ -1180,8 +1263,11 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
 
             foreach (var toolCall in turn.ToolCalls)
             {
-                if (!string.IsNullOrWhiteSpace(toolCall.Result))
-                    InsertSessionTurn(conn, tx, session, "tool", toolCall.Result, turn.Timestamp);
+                var toolText = !string.IsNullOrWhiteSpace(toolCall.Result)
+                    ? toolCall.Result
+                    : toolCall.Arguments;
+                if (!string.IsNullOrWhiteSpace(toolText))
+                    InsertSessionTurn(conn, tx, session, "tool", toolText, turn.Timestamp);
             }
         }
 

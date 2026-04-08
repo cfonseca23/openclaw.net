@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using NSubstitute;
+using OpenClaw.Core.Models;
 using OpenClaw.Gateway.Extensions;
 using Xunit;
 
@@ -60,5 +61,25 @@ public sealed class LlmClientFactoryTests
 
         Assert.Null(transport.Endpoint);
         Assert.Equal(0, transport.HiddenRetryCount);
+    }
+
+    [Theory]
+    [InlineData("openai", "gpt-4.1")]
+    [InlineData("anthropic", "claude-sonnet-4-5")]
+    [InlineData("claude", "claude-sonnet-4-5")]
+    [InlineData("gemini", "gemini-2.5-flash")]
+    [InlineData("google", "gemini-2.5-flash")]
+    public void CreateChatClient_BuiltInProviders_CreateNativeClients(string provider, string model)
+    {
+        LlmClientFactory.ResetDynamicProviders();
+
+        var client = LlmClientFactory.CreateChatClient(new LlmProviderConfig
+        {
+            Provider = provider,
+            Model = model,
+            ApiKey = "test-key"
+        });
+
+        Assert.NotNull(client);
     }
 }

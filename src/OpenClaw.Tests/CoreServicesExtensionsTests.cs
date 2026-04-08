@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
 using OpenClaw.Gateway;
 using OpenClaw.Gateway.Bootstrap;
@@ -43,5 +44,6 @@ public sealed class CoreServicesExtensionsTests
 
         Assert.Same(config.Learning, provider.GetRequiredService<LearningConfig>());
         Assert.NotNull(provider.GetRequiredService<LearningService>());
+        Assert.NotNull(provider.GetRequiredService<ISessionAdminStore>());
     }
 }

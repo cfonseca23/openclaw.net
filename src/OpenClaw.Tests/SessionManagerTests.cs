@@ -80,6 +80,68 @@ public sealed class SessionManagerTests
     }
 
     [Fact]
+    public async Task GetOrCreateByIdAsync_RestoresPausedPersistedSessionHistory()
+    {
+        var persisted = new Session
+        {
+            Id = "paused-session",
+            ChannelId = "websocket",
+            SenderId = "dana",
+            State = SessionState.Paused
+        };
+        persisted.History.Add(new ChatTurn
+        {
+            Role = "user",
+            Content = "remember me"
+        });
+
+        var manager = new SessionManager(new SeededSessionStore(persisted), new GatewayConfig
+        {
+            MaxConcurrentSessions = 8,
+            SessionTimeoutMinutes = 30
+        });
+
+        var restored = await manager.GetOrCreateByIdAsync("paused-session", "websocket", "dana", CancellationToken.None);
+
+        Assert.Equal("paused-session", restored.Id);
+        Assert.Equal(SessionState.Active, restored.State);
+        Assert.Single(restored.History);
+        Assert.Equal("remember me", restored.History[0].Content);
+        Assert.True(manager.IsActive("paused-session"));
+    }
+
+    [Fact]
+    public async Task GetOrCreateByIdAsync_RestoresExpiredPersistedSessionHistory()
+    {
+        var persisted = new Session
+        {
+            Id = "expired-session",
+            ChannelId = "websocket",
+            SenderId = "erin",
+            State = SessionState.Expired
+        };
+        persisted.History.Add(new ChatTurn
+        {
+            Role = "assistant",
+            Content = "prior answer"
+        });
+
+        var manager = new SessionManager(new SeededSessionStore(persisted), new GatewayConfig
+        {
+            MaxConcurrentSessions = 8,
+            SessionTimeoutMinutes = 30
+        });
+
+        var restored = await manager.GetOrCreateByIdAsync("expired-session", "websocket", "erin", CancellationToken.None);
+
+        Assert.Equal("expired-session", restored.Id);
+        Assert.Equal(SessionState.Active, restored.State);
+        Assert.Single(restored.History);
+        Assert.Equal("prior answer", restored.History[0].Content);
+        Assert.True(manager.IsActive("expired-session"));
+    }
+
+    [Fact]
     public async Task GetOrCreateByIdAsync_ConcurrentDistinctSessions_RespectsStrictCapacityCap()
     {
         var store = new InMemoryStore();
@@ -123,6 +185,22 @@ public sealed class SessionManagerTests
             await Task.Delay(50, ct);
             return null;
         }
+
+        public ValueTask SaveSessionAsync(Session session, CancellationToken ct) => ValueTask.CompletedTask;
+        public ValueTask<string?> LoadNoteAsync(string key, CancellationToken ct) => ValueTask.FromResult<string?>(null);
+        public ValueTask SaveNoteAsync(string key, string content, CancellationToken ct) => ValueTask.CompletedTask;
+        public ValueTask DeleteNoteAsync(string key, CancellationToken ct) => ValueTask.CompletedTask;
+        public ValueTask<IReadOnlyList<string>> ListNotesWithPrefixAsync(string prefix, CancellationToken ct) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        public ValueTask SaveBranchAsync(SessionBranch branch, CancellationToken ct) => ValueTask.CompletedTask;
+        public ValueTask<SessionBranch?> LoadBranchAsync(string branchId, CancellationToken ct) => ValueTask.FromResult<SessionBranch?>(null);
+        public ValueTask<IReadOnlyList<SessionBranch>> ListBranchesAsync(string sessionId, CancellationToken ct) => ValueTask.FromResult<IReadOnlyList<SessionBranch>>([]);
+        public ValueTask DeleteBranchAsync(string branchId, CancellationToken ct) => ValueTask.CompletedTask;
+    }
+
+    private sealed class SeededSessionStore(Session persisted) : IMemoryStore
+    {
+        public ValueTask<Session?> GetSessionAsync(string sessionId, CancellationToken ct)
+            => ValueTask.FromResult<Session?>(string.Equals(sessionId, persisted.Id, StringComparison.Ordinal) ? persisted : null);
 
         public ValueTask SaveSessionAsync(Session session, CancellationToken ct) => ValueTask.CompletedTask;
         public ValueTask<string?> LoadNoteAsync(string key, CancellationToken ct) => ValueTask.FromResult<string?>(null);
