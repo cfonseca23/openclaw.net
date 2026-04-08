@@ -8,6 +8,7 @@ using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
 using OpenClaw.Gateway.Models;
+using OpenClaw.Gateway.PromptCaching;
 
 namespace OpenClaw.Gateway;
 
@@ -36,6 +37,8 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
     private readonly RuntimeEventStore _eventStore;
     private readonly RuntimeMetrics _runtimeMetrics;
     private readonly ProviderUsageTracker _providerUsage;
+    private readonly PromptCacheCoordinator _promptCacheCoordinator;
+    private readonly PromptCacheWarmRegistry _promptCacheWarmRegistry;
     private readonly ILogger<GatewayLlmExecutionService> _logger;
     private readonly ConcurrentDictionary<string, RouteState> _routes = new(StringComparer.OrdinalIgnoreCase);
 
@@ -48,6 +51,31 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
         RuntimeMetrics runtimeMetrics,
         ProviderUsageTracker providerUsage,
         ILogger<GatewayLlmExecutionService> logger)
+        : this(
+            config,
+            modelProfiles,
+            selectionPolicy,
+            policyService,
+            eventStore,
+            runtimeMetrics,
+            providerUsage,
+            new PromptCacheCoordinator(config, new PromptCacheTraceWriter(config)),
+            new PromptCacheWarmRegistry(),
+            logger)
+    {
+    }
+
+    public GatewayLlmExecutionService(
+        GatewayConfig config,
+        ConfiguredModelProfileRegistry modelProfiles,
+        IModelSelectionPolicy selectionPolicy,
+        ProviderPolicyService policyService,
+        RuntimeEventStore eventStore,
+        RuntimeMetrics runtimeMetrics,
+        ProviderUsageTracker providerUsage,
+        PromptCacheCoordinator promptCacheCoordinator,
+        PromptCacheWarmRegistry promptCacheWarmRegistry,
+        ILogger<GatewayLlmExecutionService> logger)
     {
         _config = config;
         _modelProfiles = modelProfiles;
@@ -56,6 +84,8 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
         _eventStore = eventStore;
         _runtimeMetrics = runtimeMetrics;
         _providerUsage = providerUsage;
+        _promptCacheCoordinator = promptCacheCoordinator;
+        _promptCacheWarmRegistry = promptCacheWarmRegistry;
         _logger = logger;
     }
 
@@ -69,11 +99,36 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
         ILogger<GatewayLlmExecutionService> logger)
         : this(
             config,
+            registry,
+            policyService,
+            eventStore,
+            runtimeMetrics,
+            providerUsage,
+            new PromptCacheCoordinator(config, new PromptCacheTraceWriter(config)),
+            new PromptCacheWarmRegistry(),
+            logger)
+    {
+    }
+
+    public GatewayLlmExecutionService(
+        GatewayConfig config,
+        LlmProviderRegistry registry,
+        ProviderPolicyService policyService,
+        RuntimeEventStore eventStore,
+        RuntimeMetrics runtimeMetrics,
+        ProviderUsageTracker providerUsage,
+        PromptCacheCoordinator promptCacheCoordinator,
+        PromptCacheWarmRegistry promptCacheWarmRegistry,
+        ILogger<GatewayLlmExecutionService> logger)
+        : this(
+            config,
             CreateCompatibilityServices(config, registry),
             policyService,
             eventStore,
             runtimeMetrics,
             providerUsage,
+            promptCacheCoordinator,
+            promptCacheWarmRegistry,
             logger)
     {
     }
@@ -85,6 +140,8 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
         RuntimeEventStore eventStore,
         RuntimeMetrics runtimeMetrics,
         ProviderUsageTracker providerUsage,
+        PromptCacheCoordinator promptCacheCoordinator,
+        PromptCacheWarmRegistry promptCacheWarmRegistry,
         ILogger<GatewayLlmExecutionService> logger)
         : this(
             config,
@@ -94,6 +151,8 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
             eventStore,
             runtimeMetrics,
             providerUsage,
+            promptCacheCoordinator,
+            promptCacheWarmRegistry,
             logger)
     {
     }
@@ -185,6 +244,10 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
                     continue;
                 }
 
+                effectiveOptions.ModelId = modelId;
+                var prepared = _promptCacheCoordinator.Prepare(session, candidate.Profile, modelId, messages, effectiveOptions);
+                _promptCacheWarmRegistry.Record(prepared);
+
                 var routeState = GetOrAddRouteState(candidate.Profile.Id, candidate.Profile.ProviderId, modelId);
 
                 for (var attempt = 0; attempt <= registration.ProviderConfig.RetryCount; attempt++)
@@ -230,11 +293,14 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
                             {
                                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(innerCt);
                                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(registration.ProviderConfig.TimeoutSeconds));
-                                return await chatClient.GetResponseAsync(messages, effectiveOptions, timeoutCts.Token);
+                                return await chatClient.GetResponseAsync(prepared.Messages, prepared.Options, timeoutCts.Token);
                             }
 
-                            return await chatClient.GetResponseAsync(messages, effectiveOptions, innerCt);
+                            return await chatClient.GetResponseAsync(prepared.Messages, prepared.Options, innerCt);
                         }, ct);
+                        NormalizePromptCacheUsage(response);
+                        var cacheUsage = PromptCacheUsageExtractor.FromUsage(response.Usage);
+                        _promptCacheCoordinator.RecordResponse(prepared.Descriptor, cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
 
                         RecordEvent(session, turnContext, "llm", "request_completed", "info", $"LLM request completed for {candidate.Profile.ProviderId}/{modelId}", new()
                         {
@@ -306,6 +372,8 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
             }
 
             var selectedModelId = ResolveRequestedModelId(session, candidate.Profile);
+            var prepared = _promptCacheCoordinator.Prepare(session, candidate.Profile, selectedModelId, messages, effectiveOptions);
+            _promptCacheWarmRegistry.Record(prepared);
             var routeState = GetOrAddRouteState(candidate.Profile.Id, candidate.Profile.ProviderId, selectedModelId);
             var chatClient = registration.Client;
 
@@ -326,7 +394,6 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
                 ["policyRuleId"] = legacyPolicy.RuleId ?? ""
             });
 
-            effectiveOptions.ModelId = selectedModelId;
             IAsyncEnumerable<ChatResponseUpdate> updates = StreamWithCircuitAsync(
                 session,
                 turnContext,
@@ -334,10 +401,11 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
                 routeState,
                 candidate.Profile.ProviderId,
                 selectedModelId,
-                messages,
-                effectiveOptions,
+                prepared.Messages,
+                prepared.Options,
                 registration.ProviderConfig.TimeoutSeconds,
                 candidate.Profile.Id,
+                prepared.Descriptor,
                 ct);
 
             return Task.FromResult(new LlmStreamingExecutionResult
@@ -365,6 +433,7 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
         ChatOptions options,
         int timeoutSeconds,
         string profileId,
+        PromptCacheDescriptor descriptor,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         routeState.CircuitBreaker.ThrowIfOpen();
@@ -405,6 +474,7 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
                     routeState.LastErrorAtUtc = DateTimeOffset.UtcNow;
                     _runtimeMetrics.IncrementLlmErrors();
                     _providerUsage.RecordError(providerId, modelId);
+                    _promptCacheCoordinator.RecordResponse(descriptor, 0, 0);
                     RecordEvent(session, turnContext, "llm", "stream_failed", "error", ex.Message, new()
                     {
                         ["providerId"] = providerId,
@@ -413,6 +483,13 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
                         ["exceptionType"] = ex.GetType().Name
                     });
                     throw;
+                }
+
+                foreach (var usage in current.Contents.OfType<UsageContent>())
+                {
+                    var cacheUsage = PromptCacheUsageExtractor.FromUsage(usage.Details);
+                    if (cacheUsage != PromptCacheUsage.Empty)
+                        _promptCacheCoordinator.RecordResponse(descriptor, cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
                 }
 
                 yield return current;
@@ -513,9 +590,58 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
             MaxOutputTokens = maxOutputTokens,
             Temperature = source.Temperature,
             Tools = source.Tools,
-            ResponseFormat = source.ResponseFormat
+            ResponseFormat = source.ResponseFormat,
+            ConversationId = source.ConversationId,
+            Instructions = source.Instructions,
+            TopP = source.TopP,
+            TopK = source.TopK,
+            FrequencyPenalty = source.FrequencyPenalty,
+            PresencePenalty = source.PresencePenalty,
+            Seed = source.Seed,
+            Reasoning = source.Reasoning,
+            StopSequences = source.StopSequences?.ToList(),
+            AllowMultipleToolCalls = source.AllowMultipleToolCalls,
+            ToolMode = source.ToolMode,
+            AdditionalProperties = source.AdditionalProperties?.Clone()
         };
         return true;
+    }
+
+    private static void NormalizePromptCacheUsage(ChatResponse response)
+    {
+        if (response.Usage is null)
+            response.Usage = new UsageDetails();
+
+        if (response.AdditionalProperties is null)
+            return;
+
+        if (response.Usage.CachedInputTokenCount is null &&
+            TryReadLong(response.AdditionalProperties, "cache_read_tokens", out var cacheRead))
+        {
+            response.Usage.CachedInputTokenCount = cacheRead;
+        }
+
+        if (TryReadLong(response.AdditionalProperties, "cache_write_tokens", out var cacheWrite) ||
+            TryReadLong(response.AdditionalProperties, "cache_creation_input_tokens", out cacheWrite))
+        {
+            response.Usage.AdditionalCounts ??= new AdditionalPropertiesDictionary<long>();
+            response.Usage.AdditionalCounts["cache_write_tokens"] = cacheWrite;
+        }
+    }
+
+    private static bool TryReadLong(IReadOnlyDictionary<string, object?> properties, string key, out long value)
+    {
+        value = 0;
+        if (!properties.TryGetValue(key, out var raw) || raw is null)
+            return false;
+
+        return raw switch
+        {
+            long longValue => (value = longValue) >= 0,
+            int intValue => (value = intValue) >= 0,
+            string text when long.TryParse(text, out var parsed) => (value = parsed) >= 0,
+            _ => false
+        };
     }
 
     private string ResolveRequestedModelId(Session session, ModelProfile profile)

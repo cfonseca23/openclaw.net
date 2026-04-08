@@ -58,7 +58,8 @@ internal sealed class MafExecutionServiceChatClient : IChatClient
             result.ProviderId,
             result.ModelId,
             result.Response.Usage?.InputTokenCount,
-            result.Response.Usage?.OutputTokenCount);
+            result.Response.Usage?.OutputTokenCount,
+            PromptCacheUsageExtractor.FromUsage(result.Response.Usage));
 
         _telemetry.TagProvider(Activity.Current, result.ProviderId, result.ModelId);
         return result.Response;
@@ -86,6 +87,7 @@ internal sealed class MafExecutionServiceChatClient : IChatClient
 
         long? inputTokens = null;
         long? outputTokens = null;
+        var cacheUsage = PromptCacheUsage.Empty;
         var streamedText = new StringBuilder();
 
         await foreach (var update in result.Updates.WithCancellation(cancellationToken))
@@ -102,6 +104,7 @@ internal sealed class MafExecutionServiceChatClient : IChatClient
                     inputTokens = usage.Details.InputTokenCount.Value;
                 if (usage.Details.OutputTokenCount is > 0)
                     outputTokens = usage.Details.OutputTokenCount.Value;
+                cacheUsage = PromptCacheUsageExtractor.FromUsage(usage.Details);
             }
 
             yield return update;
@@ -116,6 +119,7 @@ internal sealed class MafExecutionServiceChatClient : IChatClient
             result.ModelId,
             inputTokens,
             outputTokens,
+            cacheUsage,
             fallbackOutputLength: streamedText.Length);
 
         _telemetry.TagProvider(Activity.Current, result.ProviderId, result.ModelId);
@@ -136,6 +140,7 @@ internal sealed class MafExecutionServiceChatClient : IChatClient
         string modelId,
         long? inputTokens,
         long? outputTokens,
+        PromptCacheUsage cacheUsage,
         int fallbackOutputLength = 0)
     {
         var resolvedInputTokens = inputTokens is > 0
@@ -149,11 +154,15 @@ internal sealed class MafExecutionServiceChatClient : IChatClient
 
         executionContext.TurnContext.RecordLlmCall(elapsed, resolvedInputTokens, resolvedOutputTokens);
         executionContext.Session.AddTokenUsage(resolvedInputTokens, resolvedOutputTokens);
+        executionContext.Session.AddCacheUsage(cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
         executionContext.RecordContractTurnUsage?.Invoke(executionContext.Session, providerId, modelId, resolvedInputTokens, resolvedOutputTokens);
         _metrics.IncrementLlmCalls();
         _metrics.AddInputTokens(resolvedInputTokens);
         _metrics.AddOutputTokens(resolvedOutputTokens);
+        _metrics.AddPromptCacheReads(cacheUsage.CacheReadTokens);
+        _metrics.AddPromptCacheWrites(cacheUsage.CacheWriteTokens);
         _providerUsage.AddTokens(providerId, modelId, resolvedInputTokens, resolvedOutputTokens);
+        _providerUsage.AddCacheTokens(providerId, modelId, cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
         _providerUsage.RecordTurn(
             executionContext.Session.Id,
             executionContext.Session.ChannelId,
@@ -161,6 +170,8 @@ internal sealed class MafExecutionServiceChatClient : IChatClient
             modelId,
             resolvedInputTokens,
             resolvedOutputTokens,
+            cacheUsage.CacheReadTokens,
+            cacheUsage.CacheWriteTokens,
             LlmExecutionEstimateBuilder.BuildInputTokenEstimate(
                 messages,
                 resolvedInputTokens,

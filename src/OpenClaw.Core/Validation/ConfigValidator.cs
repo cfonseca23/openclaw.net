@@ -20,6 +20,8 @@ public static class ConfigValidator
         "ollama",
         "azure-openai",
         "openai-compatible",
+        "anthropic-vertex",
+        "amazon-bedrock",
         "groq",
         "together",
         "lmstudio"
@@ -52,9 +54,15 @@ public static class ConfigValidator
             errors.Add($"Llm.CircuitBreakerThreshold must be >= 1 (got {config.Llm.CircuitBreakerThreshold}).");
         if (config.Llm.CircuitBreakerCooldownSeconds < 1)
             errors.Add($"Llm.CircuitBreakerCooldownSeconds must be >= 1 (got {config.Llm.CircuitBreakerCooldownSeconds}).");
+        ValidatePromptCaching("Llm.PromptCaching", config.Llm.Provider, config.Llm.PromptCaching, errors, isDynamicProvider: false);
         ValidateModelProfiles(config, errors, pluginBackedProvidersPossible);
 
         // Memory
+        if (!string.Equals(config.Memory.Provider, "file", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(config.Memory.Provider, "sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add($"Memory.Provider '{config.Memory.Provider}' must be 'file' or 'sqlite'.");
+        }
         if (string.IsNullOrWhiteSpace(config.Memory.StoragePath))
             errors.Add("Memory.StoragePath must be set.");
         if (config.Memory.MaxHistoryTurns < 1)
@@ -538,6 +546,12 @@ public static class ConfigValidator
                 errors.Add($"Models.Profiles.{profile.Id}.Capabilities.MaxContextTokens must be >= 0.");
             if (profile.Capabilities?.MaxOutputTokens < 0)
                 errors.Add($"Models.Profiles.{profile.Id}.Capabilities.MaxOutputTokens must be >= 0.");
+            ValidatePromptCaching(
+                $"Models.Profiles.{profile.Id}.PromptCaching",
+                profile.Provider,
+                profile.PromptCaching,
+                errors,
+                isDynamicProvider: pluginBackedProvidersPossible && !BuiltInLlmProviders.Contains(profile.Provider));
         }
 
         if (!hasExplicitProfiles)
@@ -573,4 +587,68 @@ public static class ConfigValidator
 
     private static string ResolveConfiguredPath(string? path)
         => ConfigPathResolver.Resolve(path);
+
+    private static void ValidatePromptCaching(
+        string prefix,
+        string? providerId,
+        PromptCachingConfig? caching,
+        List<string> errors,
+        bool isDynamicProvider)
+    {
+        if (caching is null || caching.Enabled != true)
+            return;
+
+        var retention = (caching.Retention ?? "auto").Trim().ToLowerInvariant();
+        if (retention is not ("none" or "short" or "long" or "auto"))
+            errors.Add($"{prefix}.Retention must be one of: none, short, long, auto.");
+
+        var dialect = (caching.Dialect ?? "auto").Trim().ToLowerInvariant();
+        if (dialect is not ("auto" or "openai" or "anthropic" or "gemini" or "none"))
+            errors.Add($"{prefix}.Dialect must be one of: auto, openai, anthropic, gemini, none.");
+
+        var provider = (providerId ?? string.Empty).Trim();
+        var requireExplicitDialect =
+            provider.Equals("openai-compatible", StringComparison.OrdinalIgnoreCase)
+            || provider.Equals("groq", StringComparison.OrdinalIgnoreCase)
+            || provider.Equals("together", StringComparison.OrdinalIgnoreCase)
+            || provider.Equals("lmstudio", StringComparison.OrdinalIgnoreCase)
+            || isDynamicProvider;
+
+        if (requireExplicitDialect && dialect == "auto")
+            errors.Add($"{prefix}.Dialect must be explicit for provider '{provider}'.");
+
+        if (caching.KeepWarmEnabled == true)
+        {
+            if (caching.KeepWarmIntervalMinutes < 5)
+                errors.Add($"{prefix}.KeepWarmIntervalMinutes must be >= 5 when keep-warm is enabled.");
+
+            if (!SupportsExplicitCacheTtl(provider, dialect))
+            {
+                errors.Add($"{prefix}.KeepWarmEnabled is only valid for providers with explicit cache TTL semantics.");
+            }
+        }
+    }
+
+    private static bool SupportsExplicitCacheTtl(string? providerId, string? dialect)
+    {
+        var provider = (providerId ?? string.Empty).Trim();
+        var normalizedDialect = (dialect ?? "auto").Trim();
+        if (provider.Equals("anthropic", StringComparison.OrdinalIgnoreCase) ||
+            provider.Equals("claude", StringComparison.OrdinalIgnoreCase) ||
+            provider.Equals("anthropic-vertex", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (provider.Equals("amazon-bedrock", StringComparison.OrdinalIgnoreCase))
+            return string.Equals(normalizedDialect, "anthropic", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedDialect, "auto", StringComparison.OrdinalIgnoreCase);
+
+        if (provider.Equals("gemini", StringComparison.OrdinalIgnoreCase) ||
+            provider.Equals("google", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(normalizedDialect, "gemini", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedDialect, "auto", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
 }

@@ -69,6 +69,7 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry
                 IsAvailable = item.Client is not null && item.ValidationIssues.Length == 0,
                 Tags = item.Profile.Tags,
                 Capabilities = item.Profile.Capabilities,
+                PromptCaching = item.Profile.PromptCaching,
                 ValidationIssues = item.ValidationIssues,
                 FallbackProfileIds = item.Profile.FallbackProfileIds,
                 FallbackModels = item.Profile.FallbackModels
@@ -149,14 +150,19 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry
             BaseUrl = config.Llm.Endpoint,
             ApiKey = config.Llm.ApiKey,
             FallbackModels = config.Llm.FallbackModels,
-            Capabilities = GuessCapabilities(config.Llm.Provider)
+            Capabilities = GuessCapabilities(config.Llm.Provider),
+            PromptCaching = ClonePromptCaching(config.Llm.PromptCaching)
         };
 
     private static ModelCapabilities GuessCapabilities(string providerId)
     {
         var provider = (providerId ?? string.Empty).Trim().ToLowerInvariant();
-        var supportsTools = provider is "openai" or "openai-compatible" or "azure-openai" or "groq" or "together" or "lmstudio" or "anthropic" or "claude" or "gemini" or "google";
-        var supportsVision = provider is "openai" or "openai-compatible" or "azure-openai" or "gemini" or "google" or "ollama";
+        var supportsTools = provider is "openai" or "openai-compatible" or "azure-openai" or "groq" or "together" or "lmstudio" or "anthropic" or "claude" or "anthropic-vertex" or "amazon-bedrock" or "gemini" or "google";
+        var supportsVision = provider is "openai" or "openai-compatible" or "azure-openai" or "gemini" or "google" or "ollama" or "amazon-bedrock";
+        var supportsPromptCaching = provider is "openai" or "azure-openai" or "anthropic" or "claude" or "anthropic-vertex" or "gemini" or "google";
+        var supportsExplicitCacheRetention = provider is "anthropic" or "claude" or "anthropic-vertex";
+        var reportsCacheReadTokens = supportsPromptCaching;
+        var reportsCacheWriteTokens = provider is "anthropic" or "claude" or "anthropic-vertex";
         return new ModelCapabilities
         {
             SupportsTools = supportsTools,
@@ -168,7 +174,11 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry
             SupportsReasoningEffort = provider is "openai" or "openai-compatible" or "azure-openai",
             SupportsSystemMessages = true,
             SupportsImageInput = supportsVision,
-            SupportsAudioInput = provider is "openai" or "openai-compatible" or "azure-openai"
+            SupportsAudioInput = provider is "openai" or "openai-compatible" or "azure-openai",
+            SupportsPromptCaching = supportsPromptCaching,
+            SupportsExplicitCacheRetention = supportsExplicitCacheRetention,
+            ReportsCacheReadTokens = reportsCacheReadTokens,
+            ReportsCacheWriteTokens = reportsCacheWriteTokens
         };
     }
 
@@ -184,6 +194,7 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry
             FallbackProfileIds = NormalizeDistinct(model.FallbackProfileIds),
             FallbackModels = NormalizeDistinct(model.FallbackModels),
             Capabilities = model.Capabilities ?? GuessCapabilities(Normalize(model.Provider) ?? config.Llm.Provider),
+            PromptCaching = MergePromptCaching(config.Llm.PromptCaching, model.PromptCaching),
             IsImplicit = string.Equals(model.Id, "default", StringComparison.OrdinalIgnoreCase)
                 && config.Models.Profiles.Count == 0
         };
@@ -200,11 +211,13 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry
              profile.ProviderId.Equals("groq", StringComparison.OrdinalIgnoreCase) ||
              profile.ProviderId.Equals("together", StringComparison.OrdinalIgnoreCase) ||
              profile.ProviderId.Equals("lmstudio", StringComparison.OrdinalIgnoreCase) ||
+             profile.ProviderId.Equals("anthropic-vertex", StringComparison.OrdinalIgnoreCase) ||
+             profile.ProviderId.Equals("amazon-bedrock", StringComparison.OrdinalIgnoreCase) ||
              profile.ProviderId.Equals("azure-openai", StringComparison.OrdinalIgnoreCase)) &&
             string.IsNullOrWhiteSpace(profile.BaseUrl) &&
             string.IsNullOrWhiteSpace(config.Llm.Endpoint))
         {
-            yield return "BaseUrl is required for OpenAI-compatible and Azure OpenAI profiles unless inherited from OpenClaw:Llm:Endpoint.";
+            yield return "BaseUrl is required for OpenAI-compatible, Anthropic Vertex, Amazon Bedrock, and Azure OpenAI profiles unless inherited from OpenClaw:Llm:Endpoint.";
         }
 
         if ((profile.ProviderId.Equals("openai", StringComparison.OrdinalIgnoreCase) ||
@@ -214,6 +227,8 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry
              profile.ProviderId.Equals("azure-openai", StringComparison.OrdinalIgnoreCase) ||
              profile.ProviderId.Equals("anthropic", StringComparison.OrdinalIgnoreCase) ||
              profile.ProviderId.Equals("claude", StringComparison.OrdinalIgnoreCase) ||
+             profile.ProviderId.Equals("anthropic-vertex", StringComparison.OrdinalIgnoreCase) ||
+             profile.ProviderId.Equals("amazon-bedrock", StringComparison.OrdinalIgnoreCase) ||
              profile.ProviderId.Equals("gemini", StringComparison.OrdinalIgnoreCase) ||
              profile.ProviderId.Equals("google", StringComparison.OrdinalIgnoreCase)) &&
             string.IsNullOrWhiteSpace(profile.ApiKey) &&
@@ -236,7 +251,8 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry
             TimeoutSeconds = config.Llm.TimeoutSeconds,
             RetryCount = config.Llm.RetryCount,
             CircuitBreakerThreshold = config.Llm.CircuitBreakerThreshold,
-            CircuitBreakerCooldownSeconds = config.Llm.CircuitBreakerCooldownSeconds
+            CircuitBreakerCooldownSeconds = config.Llm.CircuitBreakerCooldownSeconds,
+            PromptCaching = ClonePromptCaching(profile.PromptCaching)
         };
 
     private static string? Normalize(string? value)
@@ -258,6 +274,35 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry
                 .Select(static item => item.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+
+    private static PromptCachingConfig MergePromptCaching(PromptCachingConfig inherited, PromptCachingConfig? configured)
+    {
+        if (configured is null)
+            return ClonePromptCaching(inherited);
+
+        return new PromptCachingConfig
+        {
+            Enabled = configured.Enabled ?? inherited.Enabled,
+            Retention = string.IsNullOrWhiteSpace(configured.Retention) ? inherited.Retention : configured.Retention,
+            Dialect = string.IsNullOrWhiteSpace(configured.Dialect) ? inherited.Dialect : configured.Dialect,
+            KeepWarmEnabled = configured.KeepWarmEnabled ?? inherited.KeepWarmEnabled,
+            KeepWarmIntervalMinutes = configured.KeepWarmIntervalMinutes > 0 ? configured.KeepWarmIntervalMinutes : inherited.KeepWarmIntervalMinutes,
+            TraceEnabled = configured.TraceEnabled ?? inherited.TraceEnabled,
+            TraceFilePath = string.IsNullOrWhiteSpace(configured.TraceFilePath) ? inherited.TraceFilePath : configured.TraceFilePath
+        };
+    }
+
+    private static PromptCachingConfig ClonePromptCaching(PromptCachingConfig source)
+        => new()
+        {
+            Enabled = source.Enabled,
+            Retention = source.Retention,
+            Dialect = source.Dialect,
+            KeepWarmEnabled = source.KeepWarmEnabled,
+            KeepWarmIntervalMinutes = source.KeepWarmIntervalMinutes,
+            TraceEnabled = source.TraceEnabled,
+            TraceFilePath = source.TraceFilePath
+        };
 
     private bool TryResolveRegisteredClient(ModelProfile profile, out IChatClient? client)
     {

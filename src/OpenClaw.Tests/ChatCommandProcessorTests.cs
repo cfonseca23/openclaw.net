@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenClaw.Core.Memory;
 using OpenClaw.Core.Models;
+using OpenClaw.Core.Observability;
 using OpenClaw.Core.Pipeline;
 using OpenClaw.Core.Sessions;
 using Xunit;
@@ -58,5 +59,35 @@ public sealed class ChatCommandProcessorTests
 
         Assert.True(handled);
         Assert.Equal("Compacted: 4 turns → 6 turns remaining.", response);
+    }
+
+    [Fact]
+    public async Task Status_Command_UsesRecentUsageFallbackForPromptCacheCounters()
+    {
+        var store = new FileMemoryStore(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "openclaw-command-tests", Guid.NewGuid().ToString("N")), 4);
+        var usage = new ProviderUsageTracker();
+        usage.RecordTurn(
+            "sess-cache",
+            "websocket",
+            "openai",
+            "gpt-4.1",
+            inputTokens: 100,
+            outputTokens: 20,
+            cacheReadTokens: 512,
+            cacheWriteTokens: 0,
+            estimatedInputTokensByComponent: new InputTokenComponentEstimate());
+        var processor = new ChatCommandProcessor(new SessionManager(store, new GatewayConfig(), NullLogger.Instance), usage);
+
+        var session = new Session
+        {
+            Id = "sess-cache",
+            ChannelId = "websocket",
+            SenderId = "user1"
+        };
+
+        var (handled, response) = await processor.TryProcessCommandAsync(session, "/status", CancellationToken.None);
+
+        Assert.True(handled);
+        Assert.Contains("Prompt Cache: 512 read / 0 write", response, StringComparison.Ordinal);
     }
 }

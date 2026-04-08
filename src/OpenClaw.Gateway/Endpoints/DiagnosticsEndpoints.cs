@@ -315,7 +315,7 @@ internal static class DiagnosticsEndpoints
             sb.AppendLine("Provider Usage");
             foreach (var item in runtime.ProviderUsage.Snapshot())
             {
-                sb.AppendLine($"- {item.ProviderId}/{item.ModelId}: requests={item.Requests} retries={item.Retries} errors={item.Errors} tokens={item.InputTokens}in/{item.OutputTokens}out");
+                sb.AppendLine($"- {item.ProviderId}/{item.ModelId}: requests={item.Requests} retries={item.Retries} errors={item.Errors} tokens={item.InputTokens}in/{item.OutputTokens}out cache={item.CacheReadTokens}read/{item.CacheWriteTokens}write");
             }
             sb.AppendLine("- routes:");
             foreach (var route in runtime.Operations.LlmExecution.SnapshotRoutes())
@@ -377,6 +377,14 @@ internal static class DiagnosticsEndpoints
             {
                 sb.AppendLine($"- warning: retention is disabled while persisted sessions+branches={persistedScopedItems} (threshold={retentionDisabledWarningThreshold})");
             }
+            sb.AppendLine();
+
+            sb.AppendLine("Prompt Cache");
+            sb.AppendLine($"- enabled: {EndpointHelpers.ToBoolWord(startup.Config.Llm.PromptCaching.Enabled == true)}");
+            sb.AppendLine($"- retention: {startup.Config.Llm.PromptCaching.Retention ?? "auto"}");
+            sb.AppendLine($"- dialect: {startup.Config.Llm.PromptCaching.Dialect ?? "auto"}");
+            sb.AppendLine($"- keep_warm: {EndpointHelpers.ToBoolWord(startup.Config.Llm.PromptCaching.KeepWarmEnabled == true)} interval_minutes={startup.Config.Llm.PromptCaching.KeepWarmIntervalMinutes}");
+            sb.AppendLine($"- trace_enabled: {EndpointHelpers.ToBoolWord(startup.Config.Diagnostics.CacheTrace.Enabled || startup.Config.Llm.PromptCaching.TraceEnabled == true)}");
             sb.AppendLine();
 
             sb.AppendLine("Cron");

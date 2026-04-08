@@ -25,6 +25,11 @@ public static class DoctorCheck
         
         allPassed &= Check("LLM max tokens > 0", () => config.Llm.MaxTokens > 0);
         allPassed &= Check(
+            "Prompt cache config is provider-compatible",
+            () => HasValidPromptCacheConfiguration(config),
+            warnOnly: true,
+            detail: "OpenAI-compatible and dynamic providers require an explicit cache dialect. Keep-warm is only supported for Anthropic-family and Gemini profiles.");
+        allPassed &= Check(
             "Model profile configuration is internally consistent",
             () => HasValidModelProfileConfiguration(config),
             warnOnly: false,
@@ -259,6 +264,48 @@ public static class DoctorCheck
             AnsiConsole.MarkupLine($"[red]✖[/] {description} (Failed)");
             if (detail != null) AnsiConsole.MarkupLine($"    [grey]{detail}[/]");
         }
+    }
+
+    private static bool HasValidPromptCacheConfiguration(GatewayConfig config)
+    {
+        static bool RequiresExplicitDialect(string provider)
+            => provider.Equals("openai-compatible", StringComparison.OrdinalIgnoreCase)
+                || provider.Equals("groq", StringComparison.OrdinalIgnoreCase)
+                || provider.Equals("together", StringComparison.OrdinalIgnoreCase)
+                || provider.Equals("lmstudio", StringComparison.OrdinalIgnoreCase);
+
+        static bool SupportsKeepWarm(string provider, string dialect)
+            => (dialect.Equals("anthropic", StringComparison.OrdinalIgnoreCase) &&
+                (provider.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
+                 || provider.Equals("claude", StringComparison.OrdinalIgnoreCase)
+                 || provider.Equals("anthropic-vertex", StringComparison.OrdinalIgnoreCase)
+                 || provider.Equals("amazon-bedrock", StringComparison.OrdinalIgnoreCase)))
+               || (dialect.Equals("gemini", StringComparison.OrdinalIgnoreCase) &&
+                   (provider.Equals("gemini", StringComparison.OrdinalIgnoreCase)
+                    || provider.Equals("google", StringComparison.OrdinalIgnoreCase)));
+
+        static bool IsValid(GatewayConfig root, string provider, PromptCachingConfig? caching)
+        {
+            if (caching is null || caching.Enabled != true)
+                return true;
+
+            var dialect = (caching.Dialect ?? "auto").Trim();
+            if (RequiresExplicitDialect(provider) && dialect.Equals("auto", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return caching.KeepWarmEnabled != true || SupportsKeepWarm(provider, dialect);
+        }
+
+        if (!IsValid(config, config.Llm.Provider, config.Llm.PromptCaching))
+            return false;
+
+        foreach (var profile in config.Models.Profiles)
+        {
+            if (!IsValid(config, profile.Provider, profile.PromptCaching))
+                return false;
+        }
+
+        return true;
     }
 
     private static async Task<bool> PingOpenSandboxAsync(GatewayConfig config)

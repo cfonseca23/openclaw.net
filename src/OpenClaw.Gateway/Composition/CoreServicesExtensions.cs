@@ -13,6 +13,7 @@ using OpenClaw.Core.Sessions;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Extensions;
 using OpenClaw.Gateway.Models;
+using OpenClaw.Gateway.PromptCaching;
 
 namespace OpenClaw.Gateway.Composition;
 
@@ -30,7 +31,8 @@ internal static class CoreServicesExtensions
         services.AddSingleton(sp =>
             new AllowlistManager(config.Memory.StoragePath, sp.GetRequiredService<ILogger<AllowlistManager>>()));
 
-        services.AddSingleton<IMemoryStore>(_ => CreateMemoryStore(config));
+        services.AddSingleton<RuntimeMetrics>();
+        services.AddSingleton<IMemoryStore>(sp => CreateMemoryStore(config, sp.GetRequiredService<RuntimeMetrics>()));
         services.AddSingleton<ISessionAdminStore>(sp =>
         {
             var memory = sp.GetRequiredService<IMemoryStore>();
@@ -39,7 +41,6 @@ internal static class CoreServicesExtensions
         });
         services.AddSingleton<ISessionSearchStore>(sp => (ISessionSearchStore)sp.GetRequiredService<IMemoryStore>());
         AddFeatureStores(services, config);
-        services.AddSingleton<RuntimeMetrics>();
         services.AddSingleton<ProviderUsageTracker>();
         services.AddSingleton<ToolUsageTracker>();
         services.AddSingleton<LlmProviderRegistry>();
@@ -47,6 +48,9 @@ internal static class CoreServicesExtensions
         services.AddSingleton<IModelProfileRegistry>(sp => sp.GetRequiredService<ConfiguredModelProfileRegistry>());
         services.AddSingleton<IModelSelectionPolicy, DefaultModelSelectionPolicy>();
         services.AddSingleton<ModelEvaluationRunner>();
+        services.AddSingleton<PromptCacheTraceWriter>();
+        services.AddSingleton<PromptCacheCoordinator>();
+        services.AddSingleton<PromptCacheWarmRegistry>();
         services.AddSingleton<ProviderPolicyService>(sp =>
             new ProviderPolicyService(
                 config.Memory.StoragePath,
@@ -107,13 +111,21 @@ internal static class CoreServicesExtensions
                 config,
                 sp.GetRequiredService<ILoggerFactory>().CreateLogger("SessionManager"),
                 sp.GetRequiredService<RuntimeMetrics>()));
-        services.AddSingleton<MemoryRetentionSweeperService>();
+        services.AddSingleton(sp => new MemoryRetentionSweeperService(
+            config,
+            sp.GetRequiredService<SessionManager>(),
+            sp.GetRequiredService<IMemoryStore>(),
+            sp.GetRequiredService<RuntimeMetrics>(),
+            sp.GetRequiredService<ILogger<MemoryRetentionSweeperService>>(),
+            sp.GetRequiredService<SessionMetadataStore>().GetAll));
         services.AddSingleton<IMemoryRetentionCoordinator>(sp => sp.GetRequiredService<MemoryRetentionSweeperService>());
         services.AddHostedService(sp => sp.GetRequiredService<MemoryRetentionSweeperService>());
         services.AddSingleton<MessagePipeline>();
         services.AddSingleton(new WebSocketChannel(config.WebSocket));
         services.AddSingleton<ChatCommandProcessor>();
         services.AddSingleton<GatewayLlmExecutionService>();
+        services.AddSingleton<PromptCacheWarmService>();
+        services.AddHostedService(sp => sp.GetRequiredService<PromptCacheWarmService>());
         services.AddSingleton<IAgentRuntimeFactory, NativeAgentRuntimeFactory>();
 
         return services;
@@ -150,7 +162,7 @@ internal static class CoreServicesExtensions
         return Path.GetFullPath(dbPath);
     }
 
-    private static IMemoryStore CreateMemoryStore(OpenClaw.Core.Models.GatewayConfig config)
+    private static IMemoryStore CreateMemoryStore(OpenClaw.Core.Models.GatewayConfig config, RuntimeMetrics metrics)
     {
         if (string.Equals(config.Memory.Provider, "sqlite", StringComparison.OrdinalIgnoreCase))
         {
@@ -181,6 +193,7 @@ internal static class CoreServicesExtensions
 
         return new FileMemoryStore(
             config.Memory.StoragePath,
-            config.Memory.MaxCachedSessions ?? config.MaxConcurrentSessions);
+            config.Memory.MaxCachedSessions ?? config.MaxConcurrentSessions,
+            metrics: metrics);
     }
 }

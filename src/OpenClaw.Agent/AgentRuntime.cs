@@ -65,6 +65,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly SkillsConfig? _skillsConfig;
     private readonly string? _skillWorkspacePath;
     private readonly IReadOnlyList<string> _pluginSkillDirs;
+    private readonly string? _memoryRecallPrefix;
     private readonly object _skillGate = new();
     private string[] _loadedSkillNames = [];
     private int _skillPromptLength;
@@ -158,6 +159,9 @@ public sealed class AgentRuntime : IAgentRuntime
         _isContractRuntimeBudgetExceeded = isContractRuntimeBudgetExceeded;
         _recordContractTurnUsage = recordContractTurnUsage;
         _appendContractSnapshot = appendContractSnapshot;
+        var projectId = gatewayConfig?.Memory.ProjectId
+            ?? Environment.GetEnvironmentVariable("OPENCLAW_PROJECT");
+        _memoryRecallPrefix = string.IsNullOrWhiteSpace(projectId) ? null : $"project:{projectId.Trim()}:";
         ApplySkills(skills ?? []);
     }
 
@@ -326,11 +330,15 @@ public sealed class AgentRuntime : IAgentRuntime
             // Extract token usage from response
             var inputTokens = response.Usage?.InputTokenCount ?? 0;
             var outputTokens = response.Usage?.OutputTokenCount ?? 0;
+            var cacheUsage = PromptCacheUsageExtractor.FromUsage(response.Usage);
             turnCtx.RecordLlmCall(llmSw.Elapsed, inputTokens, outputTokens);
             _metrics?.IncrementLlmCalls();
             _metrics?.AddInputTokens(inputTokens);
             _metrics?.AddOutputTokens(outputTokens);
+            _metrics?.AddPromptCacheReads(cacheUsage.CacheReadTokens);
+            _metrics?.AddPromptCacheWrites(cacheUsage.CacheWriteTokens);
             _providerUsage?.AddTokens(executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
+            _providerUsage?.AddCacheTokens(executionResult.ProviderId, executionResult.ModelId, cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
             _providerUsage?.RecordTurn(
                 session.Id,
                 session.ChannelId,
@@ -338,10 +346,13 @@ public sealed class AgentRuntime : IAgentRuntime
                 executionResult.ModelId,
                 inputTokens,
                 outputTokens,
+                cacheUsage.CacheReadTokens,
+                cacheUsage.CacheWriteTokens,
                 LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, _skillPromptLength));
 
             // Track token usage on the session
             session.AddTokenUsage(inputTokens, outputTokens);
+            session.AddCacheUsage(cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
             _recordContractTurnUsage?.Invoke(session, executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
 
             if (TryRejectContractBudget(session, out contractBudgetMessage))
@@ -496,6 +507,7 @@ public sealed class AgentRuntime : IAgentRuntime
             }
 
             session.AddTokenUsage(streamResult.InputTokens, streamResult.OutputTokens);
+            session.AddCacheUsage(streamResult.CacheReadTokens, streamResult.CacheWriteTokens);
             if (!string.IsNullOrWhiteSpace(streamResult.ProviderId) && !string.IsNullOrWhiteSpace(streamResult.ModelId))
                 _recordContractTurnUsage?.Invoke(session, streamResult.ProviderId, streamResult.ModelId, streamResult.InputTokens, streamResult.OutputTokens);
             if (!string.IsNullOrWhiteSpace(streamResult.ProviderId) && !string.IsNullOrWhiteSpace(streamResult.ModelId))
@@ -507,6 +519,8 @@ public sealed class AgentRuntime : IAgentRuntime
                     streamResult.ModelId,
                     streamResult.InputTokens,
                     streamResult.OutputTokens,
+                    streamResult.CacheReadTokens,
+                    streamResult.CacheWriteTokens,
                     LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, streamResult.InputTokens, _skillPromptLength));
             }
 
@@ -632,9 +646,16 @@ public sealed class AgentRuntime : IAgentRuntime
         try
         {
             var limit = Math.Clamp(_recall.MaxNotes, 1, 32);
-            var hits = await search.SearchNotesAsync(userMessage, prefix: null, limit, ct);
+            _metrics?.IncrementMemoryRecallSearches();
+            var hits = await search.SearchNotesAsync(userMessage, _memoryRecallPrefix, limit, ct);
+            if (hits.Count == 0 && !string.IsNullOrWhiteSpace(_memoryRecallPrefix))
+            {
+                _metrics?.IncrementMemoryRecallSearches();
+                hits = await search.SearchNotesAsync(userMessage, prefix: null, limit, ct);
+            }
             if (hits.Count == 0)
                 return;
+            _metrics?.AddMemoryRecallHits(hits.Count);
 
             var maxChars = Math.Clamp(_recall.MaxChars, 256, 100_000);
 
@@ -743,6 +764,8 @@ public sealed class AgentRuntime : IAgentRuntime
         public List<FunctionCallContent> ToolCalls { get; } = [];
         public int InputTokens { get; set; }
         public int OutputTokens { get; set; }
+        public int CacheReadTokens { get; set; }
+        public int CacheWriteTokens { get; set; }
         public string? ProviderId { get; set; }
         public string? ModelId { get; set; }
         public string? Error { get; set; }
@@ -789,6 +812,11 @@ public sealed class AgentRuntime : IAgentRuntime
                                 result.InputTokens = (int)usage.Details.InputTokenCount.Value;
                             if (usage.Details.OutputTokenCount is > 0)
                                 result.OutputTokens = (int)usage.Details.OutputTokenCount.Value;
+                            var cacheUsage = PromptCacheUsageExtractor.FromUsage(usage.Details);
+                            if (cacheUsage.CacheReadTokens > 0)
+                                result.CacheReadTokens = (int)cacheUsage.CacheReadTokens;
+                            if (cacheUsage.CacheWriteTokens > 0)
+                                result.CacheWriteTokens = (int)cacheUsage.CacheWriteTokens;
                         }
                     }
                 }
@@ -884,6 +912,11 @@ public sealed class AgentRuntime : IAgentRuntime
                                 result.InputTokens = (int)usage.Details.InputTokenCount.Value;
                             if (usage.Details.OutputTokenCount is > 0)
                                 result.OutputTokens = (int)usage.Details.OutputTokenCount.Value;
+                            var cacheUsage = PromptCacheUsageExtractor.FromUsage(usage.Details);
+                            if (cacheUsage.CacheReadTokens > 0)
+                                result.CacheReadTokens = (int)cacheUsage.CacheReadTokens;
+                            if (cacheUsage.CacheWriteTokens > 0)
+                                result.CacheWriteTokens = (int)cacheUsage.CacheWriteTokens;
                         }
                     }
                 }
@@ -936,7 +969,10 @@ public sealed class AgentRuntime : IAgentRuntime
         _metrics?.IncrementLlmCalls();
         _metrics?.AddInputTokens(result.InputTokens);
         _metrics?.AddOutputTokens(result.OutputTokens);
+        _metrics?.AddPromptCacheReads(result.CacheReadTokens);
+        _metrics?.AddPromptCacheWrites(result.CacheWriteTokens);
         _providerUsage?.AddTokens(_config.Provider, options.ModelId ?? _config.Model, result.InputTokens, result.OutputTokens);
+        _providerUsage?.AddCacheTokens(_config.Provider, options.ModelId ?? _config.Model, result.CacheReadTokens, result.CacheWriteTokens);
         result.ProviderId = _config.Provider;
         result.ModelId = options.ModelId ?? _config.Model;
 
@@ -1258,6 +1294,7 @@ public sealed class AgentRuntime : IAgentRuntime
 
             if (!string.IsNullOrWhiteSpace(summary))
             {
+                _metrics?.IncrementMemoryCompactions();
                 session.History.RemoveRange(0, toSummarizeCount);
                 session.History.Insert(0, new ChatTurn
                 {

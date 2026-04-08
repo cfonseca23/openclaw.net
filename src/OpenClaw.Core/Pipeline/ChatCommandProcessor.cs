@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
+using OpenClaw.Core.Observability;
 using OpenClaw.Core.Sessions;
 
 namespace OpenClaw.Core.Pipeline;
@@ -31,12 +32,14 @@ public sealed class ChatCommandProcessor
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     private readonly SessionManager _sessionManager;
+    private readonly ProviderUsageTracker? _providerUsage;
     private readonly ConcurrentDictionary<string, Func<string, CancellationToken, Task<string>>> _dynamicCommands = new(StringComparer.OrdinalIgnoreCase);
     private Func<Session, CancellationToken, Task<int>>? _compactCallback;
 
-    public ChatCommandProcessor(SessionManager sessionManager)
+    public ChatCommandProcessor(SessionManager sessionManager, ProviderUsageTracker? providerUsage = null)
     {
         _sessionManager = sessionManager;
+        _providerUsage = providerUsage;
     }
 
     /// <summary>
@@ -77,7 +80,8 @@ public sealed class ChatCommandProcessor
         {
             case "/status":
                 var activeModel = session.ModelOverride ?? "default";
-                return (true, $"Session info:\n- Active Model: {activeModel}\n- Turn Count: {session.History.Count}\n- Token Usage: {session.TotalInputTokens} in / {session.TotalOutputTokens} out");
+                var (statusCacheRead, statusCacheWrite) = GetCacheTotals(session);
+                return (true, $"Session info:\n- Active Model: {activeModel}\n- Turn Count: {session.History.Count}\n- Token Usage: {session.TotalInputTokens} in / {session.TotalOutputTokens} out\n- Prompt Cache: {statusCacheRead} read / {statusCacheWrite} write");
 
             case "/new":
             case "/reset":
@@ -103,7 +107,8 @@ public sealed class ChatCommandProcessor
                 return (true, $"Model override set to: {args}");
 
             case "/usage":
-                return (true, $"Total Token Usage in this session:\n- Input: {session.TotalInputTokens}\n- Output: {session.TotalOutputTokens}\n- Sum: {session.GetTotalTokens()}");
+                var (usageCacheRead, usageCacheWrite) = GetCacheTotals(session);
+                return (true, $"Total Token Usage in this session:\n- Input: {session.TotalInputTokens}\n- Output: {session.TotalOutputTokens}\n- Sum: {session.GetTotalTokens()}\n- Prompt Cache Read: {usageCacheRead}\n- Prompt Cache Write: {usageCacheWrite}");
 
             case "/think":
                 if (string.IsNullOrWhiteSpace(args))
@@ -171,5 +176,13 @@ public sealed class ChatCommandProcessor
                 // Not a recognized command — assume it might be normal user text that just starts with a slash
                 return (false, null);
         }
+    }
+
+    private (long CacheReadTokens, long CacheWriteTokens) GetCacheTotals(Session session)
+    {
+        if (session.TotalCacheReadTokens > 0 || session.TotalCacheWriteTokens > 0)
+            return (session.TotalCacheReadTokens, session.TotalCacheWriteTokens);
+
+        return _providerUsage?.GetLatestSessionCacheTotals(session.Id) ?? (0, 0);
     }
 }

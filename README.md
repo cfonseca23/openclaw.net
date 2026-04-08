@@ -65,6 +65,18 @@ OpenClaw now supports **provider-agnostic named model profiles**. This keeps mod
 
 See [Model Profiles and Gemma](docs/MODEL_PROFILES.md) for the full configuration and evaluation guide.
 
+### Prompt Caching
+
+OpenClaw can now attach **provider-aware prompt caching hints** through the existing model-profile and provider seams rather than introducing a cache-specific runtime path.
+
+- Configure prompt caching globally under `OpenClaw:Llm:PromptCaching` or per named model profile
+- Supported cache dialects are normalized as `openai`, `anthropic`, `gemini`, or `none`
+- `openai-compatible` and dynamic providers must opt into a dialect explicitly before cache hints are sent
+- Cache usage is normalized into `cacheRead` / `cacheWrite` counters and exposed through diagnostics, session status, and provider usage summaries
+- Keep-warm is intentionally selective in v1 and only applies to providers with explicit cache TTL/resource semantics
+
+See [Prompt Caching](docs/PROMPT_CACHING.md) for configuration, provider behavior, and diagnostics details.
+
 ### Review-First Learning
 
 - The runtime can observe completed sessions and create **pending learning proposals** instead of auto-mutating behavior

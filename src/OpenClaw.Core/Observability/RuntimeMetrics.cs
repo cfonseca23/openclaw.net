@@ -38,6 +38,16 @@ public sealed class RuntimeMetrics
     private long _retentionSkippedProtectedSessions;
     private long _operatorAuditWriteFailures;
     private long _runtimeEventWriteFailures;
+    private long _sessionCacheHits;
+    private long _sessionCacheMisses;
+    private long _memoryRecallSearches;
+    private long _memoryRecallHits;
+    private long _memoryCompactions;
+    private long _promptCacheReads;
+    private long _promptCacheWrites;
+    private long _promptCacheWarmRuns;
+    private long _promptCacheWarmSkips;
+    private long _promptCacheWarmFailures;
 
     // ── Gauges ────────────────────────────────────────────────────────────
     private int _activeSessions;
@@ -74,6 +84,16 @@ public sealed class RuntimeMetrics
     public long RetentionSkippedProtectedSessions => Interlocked.Read(ref _retentionSkippedProtectedSessions);
     public long OperatorAuditWriteFailures => Interlocked.Read(ref _operatorAuditWriteFailures);
     public long RuntimeEventWriteFailures => Interlocked.Read(ref _runtimeEventWriteFailures);
+    public long SessionCacheHits => Interlocked.Read(ref _sessionCacheHits);
+    public long SessionCacheMisses => Interlocked.Read(ref _sessionCacheMisses);
+    public long MemoryRecallSearches => Interlocked.Read(ref _memoryRecallSearches);
+    public long MemoryRecallHits => Interlocked.Read(ref _memoryRecallHits);
+    public long MemoryCompactions => Interlocked.Read(ref _memoryCompactions);
+    public long PromptCacheReads => Interlocked.Read(ref _promptCacheReads);
+    public long PromptCacheWrites => Interlocked.Read(ref _promptCacheWrites);
+    public long PromptCacheWarmRuns => Interlocked.Read(ref _promptCacheWarmRuns);
+    public long PromptCacheWarmSkips => Interlocked.Read(ref _promptCacheWarmSkips);
+    public long PromptCacheWarmFailures => Interlocked.Read(ref _promptCacheWarmFailures);
     public int ActiveSessions => Volatile.Read(ref _activeSessions);
     public int CircuitBreakerState => Volatile.Read(ref _circuitBreakerState);
     public long RetentionLastRunAtUnixSeconds => Interlocked.Read(ref _retentionLastRunAtUnixSeconds);
@@ -108,6 +128,16 @@ public sealed class RuntimeMetrics
     public void AddRetentionSkippedProtectedSessions(long n) => Interlocked.Add(ref _retentionSkippedProtectedSessions, n);
     public void IncrementOperatorAuditWriteFailures() => Interlocked.Increment(ref _operatorAuditWriteFailures);
     public void IncrementRuntimeEventWriteFailures() => Interlocked.Increment(ref _runtimeEventWriteFailures);
+    public void IncrementSessionCacheHits() => Interlocked.Increment(ref _sessionCacheHits);
+    public void IncrementSessionCacheMisses() => Interlocked.Increment(ref _sessionCacheMisses);
+    public void IncrementMemoryRecallSearches() => Interlocked.Increment(ref _memoryRecallSearches);
+    public void AddMemoryRecallHits(long n) => Interlocked.Add(ref _memoryRecallHits, n);
+    public void IncrementMemoryCompactions() => Interlocked.Increment(ref _memoryCompactions);
+    public void AddPromptCacheReads(long n) => Interlocked.Add(ref _promptCacheReads, n);
+    public void AddPromptCacheWrites(long n) => Interlocked.Add(ref _promptCacheWrites, n);
+    public void IncrementPromptCacheWarmRuns() => Interlocked.Increment(ref _promptCacheWarmRuns);
+    public void IncrementPromptCacheWarmSkips() => Interlocked.Increment(ref _promptCacheWarmSkips);
+    public void IncrementPromptCacheWarmFailures() => Interlocked.Increment(ref _promptCacheWarmFailures);
     public void SetActiveSessions(int count) => Volatile.Write(ref _activeSessions, count);
     public void SetCircuitBreakerState(int state) => Volatile.Write(ref _circuitBreakerState, state);
     public void SetRetentionLastRun(DateTimeOffset runAtUtc, long durationMs, bool succeeded)
@@ -150,6 +180,16 @@ public sealed class RuntimeMetrics
         RetentionSkippedProtectedSessions = RetentionSkippedProtectedSessions,
         OperatorAuditWriteFailures = OperatorAuditWriteFailures,
         RuntimeEventWriteFailures = RuntimeEventWriteFailures,
+        SessionCacheHits = SessionCacheHits,
+        SessionCacheMisses = SessionCacheMisses,
+        MemoryRecallSearches = MemoryRecallSearches,
+        MemoryRecallHits = MemoryRecallHits,
+        MemoryCompactions = MemoryCompactions,
+        PromptCacheReads = PromptCacheReads,
+        PromptCacheWrites = PromptCacheWrites,
+        PromptCacheWarmRuns = PromptCacheWarmRuns,
+        PromptCacheWarmSkips = PromptCacheWarmSkips,
+        PromptCacheWarmFailures = PromptCacheWarmFailures,
         RetentionLastRunAtUnixSeconds = RetentionLastRunAtUnixSeconds,
         RetentionLastRunDurationMs = RetentionLastRunDurationMs,
         RetentionLastRunSucceeded = RetentionLastRunSucceeded,
@@ -188,6 +228,16 @@ public struct MetricsSnapshot
     public long RetentionSkippedProtectedSessions { get; set; }
     public long OperatorAuditWriteFailures { get; set; }
     public long RuntimeEventWriteFailures { get; set; }
+    public long SessionCacheHits { get; set; }
+    public long SessionCacheMisses { get; set; }
+    public long MemoryRecallSearches { get; set; }
+    public long MemoryRecallHits { get; set; }
+    public long MemoryCompactions { get; set; }
+    public long PromptCacheReads { get; set; }
+    public long PromptCacheWrites { get; set; }
+    public long PromptCacheWarmRuns { get; set; }
+    public long PromptCacheWarmSkips { get; set; }
+    public long PromptCacheWarmFailures { get; set; }
     public long RetentionLastRunAtUnixSeconds { get; set; }
     public long RetentionLastRunDurationMs { get; set; }
     public int RetentionLastRunSucceeded { get; set; }
