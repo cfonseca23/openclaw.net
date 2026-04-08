@@ -76,6 +76,15 @@ internal sealed class PromptCacheWarmRegistry
             current.LastWarmedAtUtc = warmedAtUtc;
     }
 
+    public void Prune(IReadOnlySet<string> activeSessionIds, DateTimeOffset staleBeforeUtc)
+    {
+        foreach (var entry in _entries)
+        {
+            if (!activeSessionIds.Contains(entry.Value.Descriptor.SessionId) || entry.Value.LastSeenAtUtc < staleBeforeUtc)
+                _entries.TryRemove(entry.Key, out _);
+        }
+    }
+
     private static string BuildKey(string sessionId, string profileId) => $"{sessionId}:{profileId}";
 }
 
@@ -105,8 +114,9 @@ internal sealed class PromptCacheCoordinator
         var toolSignature = BuildToolSignature(options);
         var stableFingerprint = BuildStableFingerprint(profile.ProviderId, modelId, stableSystem, toolSignature, options.ResponseFormat);
         var preparedOptions = CloneOptions(options);
+        preparedOptions.ModelId = modelId;
 
-        if (caching.Enabled == true && dialect != "none")
+        if (caching.Enabled == true && dialect != "none" && profile.Capabilities.SupportsPromptCaching)
         {
             preparedOptions.AdditionalProperties ??= new AdditionalPropertiesDictionary();
             preparedOptions.AdditionalProperties["openclaw_prompt_cache_enabled"] = true;

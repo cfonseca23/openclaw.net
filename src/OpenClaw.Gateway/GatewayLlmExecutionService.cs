@@ -244,6 +244,7 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
                     continue;
                 }
 
+                effectiveOptions.ModelId = modelId;
                 var prepared = _promptCacheCoordinator.Prepare(session, candidate.Profile, modelId, messages, effectiveOptions);
                 _promptCacheWarmRegistry.Record(prepared);
 

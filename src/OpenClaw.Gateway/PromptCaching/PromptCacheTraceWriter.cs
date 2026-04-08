@@ -34,7 +34,7 @@ internal sealed class PromptCacheTraceWriter
             StableSystemPrompt = ShouldIncludeSystem() ? descriptor.StableSystemPrompt : null,
             PromptText = ShouldIncludePrompt() ? descriptor.VolatileSuffix : null,
             MessageCount = messages.Count,
-            AdditionalProperties = options.AdditionalProperties?.ToDictionary(static kvp => kvp.Key, static kvp => kvp.Value?.ToString())
+            AdditionalProperties = options.AdditionalProperties?.ToDictionary(static kvp => kvp.Key, static kvp => RenderPropertyValue(kvp.Value))
         });
     }
 
@@ -121,6 +121,31 @@ internal sealed class PromptCacheTraceWriter
             _ => bool.TryParse(raw, out var parsed) ? parsed : fallback
         };
     }
+
+    private static string? RenderPropertyValue(object? value)
+        => value switch
+        {
+            null => null,
+            string stringValue => stringValue,
+            bool boolValue => boolValue ? "true" : "false",
+            byte byteValue => byteValue.ToString(),
+            sbyte sbyteValue => sbyteValue.ToString(),
+            short shortValue => shortValue.ToString(),
+            ushort ushortValue => ushortValue.ToString(),
+            int intValue => intValue.ToString(),
+            uint uintValue => uintValue.ToString(),
+            long longValue => longValue.ToString(),
+            ulong ulongValue => ulongValue.ToString(),
+            float floatValue => floatValue.ToString(),
+            double doubleValue => doubleValue.ToString(),
+            decimal decimalValue => decimalValue.ToString(),
+            Guid guidValue => guidValue.ToString(),
+            DateTime dateTimeValue => dateTimeValue.ToString("O"),
+            DateTimeOffset dateTimeOffsetValue => dateTimeOffsetValue.ToString("O"),
+            TimeSpan timeSpanValue => timeSpanValue.ToString(),
+            Uri uriValue => uriValue.ToString(),
+            _ => "[OMITTED]"
+        };
 
     internal sealed class PromptCacheTraceEntry
     {

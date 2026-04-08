@@ -6,6 +6,7 @@ using Xunit;
 
 namespace OpenClaw.Tests;
 
+[Collection(DynamicProviderRegistryCollection.Name)]
 public sealed class LlmClientFactoryTests
 {
     [Fact]

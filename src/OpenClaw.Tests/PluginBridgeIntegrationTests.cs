@@ -17,6 +17,7 @@ using Xunit.Abstractions;
 
 namespace OpenClaw.Tests;
 
+[Collection(DynamicProviderRegistryCollection.Name)]
 public sealed class PluginBridgeIntegrationTests : IDisposable
 {
     private readonly string _tempDir;

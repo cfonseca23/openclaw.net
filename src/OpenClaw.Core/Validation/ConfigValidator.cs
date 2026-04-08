@@ -632,13 +632,22 @@ public static class ConfigValidator
     private static bool SupportsExplicitCacheTtl(string? providerId, string? dialect)
     {
         var provider = (providerId ?? string.Empty).Trim();
+        var normalizedDialect = (dialect ?? "auto").Trim();
         if (provider.Equals("anthropic", StringComparison.OrdinalIgnoreCase) ||
             provider.Equals("claude", StringComparison.OrdinalIgnoreCase) ||
             provider.Equals("anthropic-vertex", StringComparison.OrdinalIgnoreCase))
             return true;
 
         if (provider.Equals("amazon-bedrock", StringComparison.OrdinalIgnoreCase))
-            return string.Equals(dialect, "anthropic", StringComparison.OrdinalIgnoreCase) || string.Equals(dialect, "auto", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(normalizedDialect, "anthropic", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedDialect, "auto", StringComparison.OrdinalIgnoreCase);
+
+        if (provider.Equals("gemini", StringComparison.OrdinalIgnoreCase) ||
+            provider.Equals("google", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(normalizedDialect, "gemini", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedDialect, "auto", StringComparison.OrdinalIgnoreCase);
+        }
 
         return false;
     }

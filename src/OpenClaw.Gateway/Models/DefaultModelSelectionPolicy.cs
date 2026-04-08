@@ -65,8 +65,33 @@ internal sealed class DefaultModelSelectionPolicy : IModelSelectionPolicy
         if (candidates.Length > 0)
             return BuildResult(null, candidates[0].Profile, requirements, preferredTags, candidates, null);
 
+        if (TryResolveLegacyImplicitDefault(out var legacyDefault) && IsSelectable(legacyDefault))
+        {
+            return BuildResult(
+                requestedProfileId: null,
+                legacyDefault.Profile,
+                requirements,
+                preferredTags,
+                [ToCandidate(legacyDefault)],
+                "Using the implicit default model profile because no explicit model-profile configuration is present.");
+        }
+
         throw new ModelSelectionException(
             $"No configured model profile satisfies the current request requirements ({DescribeRequirementSummary(requirements)}).");
+    }
+
+    private bool TryResolveLegacyImplicitDefault(out ConfiguredModelProfileRegistry.Registration registration)
+    {
+        registration = null!;
+        var statuses = _registry.ListStatuses();
+        if (statuses.Count != 1 || !statuses[0].IsImplicit)
+            return false;
+
+        if (!_registry.TryGetRegistration(statuses[0].Id, out var resolved) || resolved is null)
+            return false;
+
+        registration = resolved;
+        return true;
     }
 
     private static ModelSelectionResult BuildResult(

@@ -60,6 +60,7 @@ internal sealed class PromptCacheWarmService : BackgroundService
             .Select(static session => session.Id)
             .ToHashSet(StringComparer.Ordinal);
         var now = DateTimeOffset.UtcNow;
+        _warmRegistry.Prune(activeSessionIds, now - TimeSpan.FromHours(6));
 
         foreach (var candidate in _warmRegistry.Snapshot())
         {
