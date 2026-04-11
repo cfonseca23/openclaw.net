@@ -151,6 +151,7 @@ internal sealed class CodingBackendProcessHost
         private readonly ILogger _logger;
         private readonly CancellationTokenSource _stopCts = new();
         private readonly object _completionGate = new();
+        private readonly TaskCompletionSource _completionTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private Task _stdoutTask = Task.CompletedTask;
         private Task _stderrTask = Task.CompletedTask;
         private string? _requestedCompletionState;
@@ -220,6 +221,8 @@ internal sealed class CodingBackendProcessHost
             catch
             {
             }
+
+            await _completionTcs.Task.WaitAsync(ct);
         }
 
         private void RequestCompletion(string state, int? exitCode, string? reason, bool overwrite = true)
@@ -318,24 +321,30 @@ internal sealed class CodingBackendProcessHost
             if (Interlocked.Exchange(ref _completed, 1) != 0)
                 return;
 
-            var completed = _runtime.Session with
+            try
             {
-                State = state,
-                ExitCode = exitCode,
-                CompletedAtUtc = DateTimeOffset.UtcNow,
-                LastError = state == BackendSessionState.Failed ? reason : _runtime.Session.LastError
-            };
-            await _runtime.UpdateSessionAsync(completed, ct);
-            await _runtime.AppendEventAsync(new BackendSessionCompletedEvent
+                var completed = _runtime.Session with
+                {
+                    State = state,
+                    ExitCode = exitCode,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    LastError = state == BackendSessionState.Failed ? reason : _runtime.Session.LastError
+                };
+                await _runtime.UpdateSessionAsync(completed, ct);
+                await _runtime.AppendEventAsync(new BackendSessionCompletedEvent
+                {
+                    SessionId = _spec.SessionId,
+                    ExitCode = exitCode,
+                    Reason = reason
+                }, ct);
+            }
+            finally
             {
-                SessionId = _spec.SessionId,
-                ExitCode = exitCode,
-                Reason = reason
-            }, ct);
-
-            _onClosed(_spec.SessionId);
-            _stopCts.Cancel();
-            _process.Dispose();
+                _onClosed(_spec.SessionId);
+                _stopCts.Cancel();
+                _process.Dispose();
+                _completionTcs.TrySetResult();
+            }
         }
     }
 }
