@@ -25,6 +25,8 @@ public sealed class MafOptions
 
     public string A2AVersion { get; set; } = "1.0.0";
 
+    public string? A2APublicBaseUrl { get; set; }
+
     public List<A2ASkillConfig> A2ASkills { get; set; } = [];
 }
 

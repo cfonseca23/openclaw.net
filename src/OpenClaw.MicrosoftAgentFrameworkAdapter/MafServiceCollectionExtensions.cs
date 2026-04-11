@@ -53,22 +53,40 @@ public static class MafServiceCollectionExtensions
         if (!string.IsNullOrWhiteSpace(a2aVersion))
             options.A2AVersion = a2aVersion;
 
+        var a2aPublicBaseUrl = section["A2APublicBaseUrl"];
+        if (!string.IsNullOrWhiteSpace(a2aPublicBaseUrl))
+            options.A2APublicBaseUrl = a2aPublicBaseUrl.Trim();
+
         var skillsSection = section.GetSection("A2ASkills");
         if (skillsSection.Exists())
         {
             var skills = new List<A2ASkillConfig>();
             foreach (var child in skillsSection.GetChildren())
             {
+                var skillId = child["Id"]?.Trim();
+                var skillName = child["Name"]?.Trim();
+                if (string.IsNullOrWhiteSpace(skillId) || string.IsNullOrWhiteSpace(skillName))
+                    continue;
+
                 var skill = new A2ASkillConfig
                 {
-                    Id = child["Id"] ?? "",
-                    Name = child["Name"] ?? "",
+                    Id = skillId,
+                    Name = skillName,
                     Description = child["Description"]
                 };
 
                 var tagsSection = child.GetSection("Tags");
                 if (tagsSection.Exists())
-                    skill.Tags = tagsSection.GetChildren().Select(static t => t.Value ?? "").ToList();
+                {
+                    var tags = tagsSection
+                        .GetChildren()
+                        .Select(static t => t.Value?.Trim())
+                        .Where(static value => !string.IsNullOrWhiteSpace(value))
+                        .Cast<string>()
+                        .ToList();
+                    if (tags.Count > 0)
+                        skill.Tags = tags;
+                }
 
                 skills.Add(skill);
             }
