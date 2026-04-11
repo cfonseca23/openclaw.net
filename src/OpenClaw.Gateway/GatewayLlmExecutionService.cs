@@ -89,7 +89,7 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
         _logger = logger;
     }
 
-    public GatewayLlmExecutionService(
+    internal GatewayLlmExecutionService(
         GatewayConfig config,
         LlmProviderRegistry registry,
         ProviderPolicyService policyService,
@@ -110,7 +110,7 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
     {
     }
 
-    public GatewayLlmExecutionService(
+    internal GatewayLlmExecutionService(
         GatewayConfig config,
         LlmProviderRegistry registry,
         ProviderPolicyService policyService,

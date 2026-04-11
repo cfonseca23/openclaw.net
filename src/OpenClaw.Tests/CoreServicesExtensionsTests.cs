@@ -15,35 +15,102 @@ public sealed class CoreServicesExtensionsTests
     {
         var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempPath);
-
-        var config = new GatewayConfig
+        try
         {
-            Memory = new MemoryConfig
+            var config = new GatewayConfig
             {
-                StoragePath = tempPath
-            }
-        };
-        var startup = new GatewayStartupContext
+                Memory = new MemoryConfig
+                {
+                    StoragePath = tempPath
+                }
+            };
+            var startup = new GatewayStartupContext
+            {
+                Config = config,
+                RuntimeState = new GatewayRuntimeState
+                {
+                    RequestedMode = "jit",
+                    EffectiveMode = GatewayRuntimeMode.Jit,
+                    DynamicCodeSupported = true
+                },
+                IsNonLoopbackBind = false
+            };
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddOptions();
+            services.AddOpenClawCoreServices(startup);
+
+            using var provider = services.BuildServiceProvider();
+
+            Assert.Same(config.Learning, provider.GetRequiredService<LearningConfig>());
+            Assert.NotNull(provider.GetRequiredService<LearningService>());
+            Assert.NotNull(provider.GetRequiredService<ISessionAdminStore>());
+        }
+        finally
         {
-            Config = config,
-            RuntimeState = new GatewayRuntimeState
+            DeleteDirectoryIfPresent(tempPath);
+        }
+    }
+
+    [Fact]
+    public void AddOpenClawCoreServices_WithSecurityServices_AllowsGatewayLlmExecutionServiceToResolveDuringValidation()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempPath);
+        try
+        {
+            var config = new GatewayConfig
             {
-                RequestedMode = "jit",
-                EffectiveMode = GatewayRuntimeMode.Jit,
-                DynamicCodeSupported = true
-            },
-            IsNonLoopbackBind = false
-        };
+                Memory = new MemoryConfig
+                {
+                    StoragePath = tempPath
+                }
+            };
+            var startup = new GatewayStartupContext
+            {
+                Config = config,
+                RuntimeState = new GatewayRuntimeState
+                {
+                    RequestedMode = "jit",
+                    EffectiveMode = GatewayRuntimeMode.Jit,
+                    DynamicCodeSupported = true
+                },
+                IsNonLoopbackBind = false
+            };
 
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddOptions();
-        services.AddOpenClawCoreServices(startup);
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddOptions();
+            services.AddOpenClawCoreServices(startup);
+            services.AddOpenClawSecurityServices(startup);
 
-        using var provider = services.BuildServiceProvider();
+            using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+            {
+                ValidateOnBuild = true,
+                ValidateScopes = true
+            });
 
-        Assert.Same(config.Learning, provider.GetRequiredService<LearningConfig>());
-        Assert.NotNull(provider.GetRequiredService<LearningService>());
-        Assert.NotNull(provider.GetRequiredService<ISessionAdminStore>());
+            Assert.NotNull(provider.GetRequiredService<GatewayLlmExecutionService>());
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(tempPath);
+        }
+    }
+
+    private static void DeleteDirectoryIfPresent(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 }
