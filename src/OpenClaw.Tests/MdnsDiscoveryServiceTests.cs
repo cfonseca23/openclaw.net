@@ -47,6 +47,22 @@ public sealed class MdnsDiscoveryServiceTests
         Assert.Contains(MdnsDiscoveryService.DnsRecordType.A, recordTypes);
     }
 
+    [Fact]
+    public void BuildResponsePacket_IncludesIpv6AddressRecords()
+    {
+        var response = MdnsDiscoveryService.BuildResponsePacket(
+            transactionId: 0x4242,
+            instanceName: "OpenClaw",
+            serviceType: "_openclaw._tcp",
+            hostName: "openclaw-host",
+            port: 18789,
+            authRequired: false,
+            addresses: [IPAddress.Parse("2001:db8::42")]);
+
+        var recordTypes = ReadRecordTypes(response);
+        Assert.Contains(MdnsDiscoveryService.DnsRecordType.Aaaa, recordTypes);
+    }
+
     private static byte[] BuildQueryPacket(string fqdn, ushort type)
     {
         using var stream = new MemoryStream();

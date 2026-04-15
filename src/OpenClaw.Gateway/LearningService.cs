@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
@@ -591,14 +592,34 @@ Use it when repeated requests resemble the sessions that produced this draft.
     }
 
     private static bool FactsEqual(IReadOnlyList<UserProfileFact> before, IReadOnlyList<UserProfileFact> after)
-        => string.Equals(SerializeFacts(before), SerializeFacts(after), StringComparison.Ordinal);
+    {
+        var normalizedBefore = NormalizeFacts(before);
+        var normalizedAfter = NormalizeFacts(after);
+        if (normalizedBefore.Count != normalizedAfter.Count)
+            return false;
+
+        for (var i = 0; i < normalizedBefore.Count; i++)
+        {
+            var left = normalizedBefore[i];
+            var right = normalizedAfter[i];
+            if (!string.Equals(left.Key, right.Key, StringComparison.Ordinal) ||
+                !string.Equals(left.Value, right.Value, StringComparison.Ordinal) ||
+                left.ConfidenceBits != right.ConfidenceBits ||
+                !left.SourceSessionIds.SequenceEqual(right.SourceSessionIds, StringComparer.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static string SerializeStringList(IReadOnlyList<string> items)
         => "[" + string.Join(", ", items.Select(static item => $"\"{EscapeValue(item)}\"")) + "]";
 
     private static string SerializeFacts(IReadOnlyList<UserProfileFact> facts)
         => "[" + string.Join(", ", NormalizeFacts(facts).Select(static fact =>
-            $"{{key:\"{EscapeValue(fact.Key)}\", value:\"{EscapeValue(fact.Value)}\", confidence:{fact.Confidence:0.###}, sessions:{SerializeStringList(fact.SourceSessionIds)}}}")) + "]";
+            $"{{key:\"{EscapeValue(fact.Key)}\", value:\"{EscapeValue(fact.Value)}\", confidence:{fact.Confidence.ToString("R", CultureInfo.InvariantCulture)}, sessions:{SerializeStringList(fact.SourceSessionIds)}}}")) + "]";
 
     private static IReadOnlyList<NormalizedFact> NormalizeFacts(IReadOnlyList<UserProfileFact> facts)
         => facts
@@ -607,10 +628,13 @@ Use it when repeated requests resemble the sessions that produced this draft.
                 Key = fact.Key,
                 Value = fact.Value,
                 Confidence = fact.Confidence,
+                ConfidenceBits = BitConverter.SingleToInt32Bits(fact.Confidence),
                 SourceSessionIds = fact.SourceSessionIds.OrderBy(static item => item, StringComparer.Ordinal).ToArray()
             })
             .OrderBy(static fact => fact.Key, StringComparer.Ordinal)
             .ThenBy(static fact => fact.Value, StringComparer.Ordinal)
+            .ThenBy(static fact => fact.ConfidenceBits)
+            .ThenBy(static fact => string.Join("\u001F", fact.SourceSessionIds), StringComparer.Ordinal)
             .ToArray();
 
     private static string EscapeValue(string value)
@@ -632,6 +656,7 @@ Use it when repeated requests resemble the sessions that produced this draft.
         public required string Key { get; init; }
         public required string Value { get; init; }
         public required float Confidence { get; init; }
+        public required int ConfidenceBits { get; init; }
         public required IReadOnlyList<string> SourceSessionIds { get; init; }
     }
 }

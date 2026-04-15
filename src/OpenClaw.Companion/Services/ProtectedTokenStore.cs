@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Runtime.Versioning;
+using System.Runtime.InteropServices;
 
 namespace OpenClaw.Companion.Services;
 
@@ -121,7 +122,7 @@ internal static class CompanionSecretStoreFactory
 {
     public static ICompanionSecretStore CreateDefault(string baseDir)
     {
-        if (OperatingSystem.IsMacOS() && File.Exists("/usr/bin/security"))
+        if (OperatingSystem.IsMacOS())
             return new MacOsKeychainSecretStore(baseDir);
 
         if (OperatingSystem.IsWindows())
@@ -134,6 +135,13 @@ internal static class CompanionSecretStoreFactory
     }
 }
 
+internal static class CompanionSecretStoreNaming
+{
+    public static string BuildScopedAccountName(string baseDir)
+        => "auth-token-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(baseDir))).Substring(0, 16);
+}
+
+[SupportedOSPlatform("macos")]
 internal sealed class MacOsKeychainSecretStore : ICompanionSecretStore
 {
     private readonly string _serviceName = "OpenClaw.Companion";
@@ -141,47 +149,213 @@ internal sealed class MacOsKeychainSecretStore : ICompanionSecretStore
 
     public MacOsKeychainSecretStore(string baseDir)
     {
-        _accountName = BuildAccountName(baseDir);
+        _accountName = CompanionSecretStoreNaming.BuildScopedAccountName(baseDir);
     }
 
     public string StorageDescription => $"keychain:{_serviceName}/{_accountName}";
 
-    public bool IsAvailable => File.Exists("/usr/bin/security");
+    public bool IsAvailable => OperatingSystem.IsMacOS();
 
     public string? LoadSecret(out string? warning)
     {
-        warning = null;
-        var result = ProcessCommandSecretStore.Run(
-            "/usr/bin/security",
-            ["find-generic-password", "-a", _accountName, "-s", _serviceName, "-w"]);
-        if (result.ExitCode == 0)
-            return result.StdOut.TrimEnd();
-
-        if (!result.StdErr.Contains("could not be found", StringComparison.OrdinalIgnoreCase))
-            warning = $"Failed to load token from macOS Keychain. {result.StdErr.Trim()}";
-        return null;
+        var status = MacOsKeychainNative.LoadSecret(_serviceName, _accountName, out var secret);
+        warning = status switch
+        {
+            MacOsKeychainNative.ErrSecSuccess => null,
+            MacOsKeychainNative.ErrSecItemNotFound => null,
+            _ => $"Failed to load token from macOS Keychain. OSStatus={status}."
+        };
+        return status == MacOsKeychainNative.ErrSecSuccess ? secret : null;
     }
 
     public bool SaveSecret(string secret, out string? warning)
     {
-        var result = ProcessCommandSecretStore.Run(
-            "/usr/bin/security",
-            ["add-generic-password", "-U", "-a", _accountName, "-s", _serviceName, "-w", secret]);
-        warning = result.ExitCode == 0
+        var status = MacOsKeychainNative.SaveSecret(_serviceName, _accountName, secret);
+        warning = status == MacOsKeychainNative.ErrSecSuccess
             ? null
-            : $"Failed to save token in macOS Keychain. {result.StdErr.Trim()}";
-        return result.ExitCode == 0;
+            : $"Failed to save token in macOS Keychain. OSStatus={status}.";
+        return status == MacOsKeychainNative.ErrSecSuccess;
     }
 
     public void ClearSecret()
     {
-        _ = ProcessCommandSecretStore.Run(
-            "/usr/bin/security",
-            ["delete-generic-password", "-a", _accountName, "-s", _serviceName]);
+        _ = MacOsKeychainNative.DeleteSecret(_serviceName, _accountName);
+    }
+}
+
+[SupportedOSPlatform("macos")]
+internal static class MacOsKeychainNative
+{
+    private const string SecurityFramework = "/System/Library/Frameworks/Security.framework/Security";
+    private const string CoreFoundationFramework = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+
+    public const int ErrSecSuccess = 0;
+    public const int ErrSecDuplicateItem = -25299;
+    public const int ErrSecItemNotFound = -25300;
+
+    public static int LoadSecret(string serviceName, string accountName, out string? secret)
+    {
+        secret = null;
+        var serviceBytes = Encoding.UTF8.GetBytes(serviceName);
+        var accountBytes = Encoding.UTF8.GetBytes(accountName);
+        var status = SecKeychainFindGenericPassword(
+            IntPtr.Zero,
+            (uint)serviceBytes.Length,
+            serviceBytes,
+            (uint)accountBytes.Length,
+            accountBytes,
+            out var passwordLength,
+            out var passwordData,
+            out var itemRef);
+
+        try
+        {
+            if (status != ErrSecSuccess)
+                return status;
+
+            if (passwordLength == 0 || passwordData == IntPtr.Zero)
+            {
+                secret = string.Empty;
+                return ErrSecSuccess;
+            }
+
+            var bytes = new byte[passwordLength];
+            Marshal.Copy(passwordData, bytes, 0, bytes.Length);
+            secret = Encoding.UTF8.GetString(bytes);
+            return ErrSecSuccess;
+        }
+        finally
+        {
+            if (passwordData != IntPtr.Zero)
+                _ = SecKeychainItemFreeContent(IntPtr.Zero, passwordData);
+            Release(itemRef);
+        }
     }
 
-    internal static string BuildAccountName(string baseDir)
-        => "auth-token-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(baseDir))).Substring(0, 16);
+    public static int SaveSecret(string serviceName, string accountName, string secret)
+    {
+        var serviceBytes = Encoding.UTF8.GetBytes(serviceName);
+        var accountBytes = Encoding.UTF8.GetBytes(accountName);
+        var secretBytes = Encoding.UTF8.GetBytes(secret);
+
+        var status = SecKeychainAddGenericPassword(
+            IntPtr.Zero,
+            (uint)serviceBytes.Length,
+            serviceBytes,
+            (uint)accountBytes.Length,
+            accountBytes,
+            (uint)secretBytes.Length,
+            secretBytes,
+            out var addedItemRef);
+        try
+        {
+            if (status == ErrSecSuccess)
+                return status;
+            if (status != ErrSecDuplicateItem)
+                return status;
+        }
+        finally
+        {
+            Release(addedItemRef);
+        }
+
+        status = SecKeychainFindGenericPassword(
+            IntPtr.Zero,
+            (uint)serviceBytes.Length,
+            serviceBytes,
+            (uint)accountBytes.Length,
+            accountBytes,
+            out _,
+            out var existingPasswordData,
+            out var itemRef);
+        try
+        {
+            if (status != ErrSecSuccess)
+                return status;
+
+            return SecKeychainItemModifyAttributesAndData(itemRef, IntPtr.Zero, (uint)secretBytes.Length, secretBytes);
+        }
+        finally
+        {
+            if (existingPasswordData != IntPtr.Zero)
+                _ = SecKeychainItemFreeContent(IntPtr.Zero, existingPasswordData);
+            Release(itemRef);
+        }
+    }
+
+    public static int DeleteSecret(string serviceName, string accountName)
+    {
+        var serviceBytes = Encoding.UTF8.GetBytes(serviceName);
+        var accountBytes = Encoding.UTF8.GetBytes(accountName);
+        var status = SecKeychainFindGenericPassword(
+            IntPtr.Zero,
+            (uint)serviceBytes.Length,
+            serviceBytes,
+            (uint)accountBytes.Length,
+            accountBytes,
+            out _,
+            out var passwordData,
+            out var itemRef);
+        try
+        {
+            if (status == ErrSecItemNotFound)
+                return ErrSecSuccess;
+            if (status != ErrSecSuccess)
+                return status;
+
+            return SecKeychainItemDelete(itemRef);
+        }
+        finally
+        {
+            if (passwordData != IntPtr.Zero)
+                _ = SecKeychainItemFreeContent(IntPtr.Zero, passwordData);
+            Release(itemRef);
+        }
+    }
+
+    private static void Release(IntPtr handle)
+    {
+        if (handle != IntPtr.Zero)
+            CFRelease(handle);
+    }
+
+    [DllImport(SecurityFramework)]
+    private static extern int SecKeychainFindGenericPassword(
+        IntPtr keychainOrArray,
+        uint serviceNameLength,
+        byte[] serviceName,
+        uint accountNameLength,
+        byte[] accountName,
+        out uint passwordLength,
+        out IntPtr passwordData,
+        out IntPtr itemRef);
+
+    [DllImport(SecurityFramework)]
+    private static extern int SecKeychainAddGenericPassword(
+        IntPtr keychain,
+        uint serviceNameLength,
+        byte[] serviceName,
+        uint accountNameLength,
+        byte[] accountName,
+        uint passwordLength,
+        byte[] passwordData,
+        out IntPtr itemRef);
+
+    [DllImport(SecurityFramework)]
+    private static extern int SecKeychainItemModifyAttributesAndData(
+        IntPtr itemRef,
+        IntPtr attrList,
+        uint length,
+        byte[] data);
+
+    [DllImport(SecurityFramework)]
+    private static extern int SecKeychainItemDelete(IntPtr itemRef);
+
+    [DllImport(SecurityFramework)]
+    private static extern int SecKeychainItemFreeContent(IntPtr attrList, IntPtr data);
+
+    [DllImport(CoreFoundationFramework)]
+    private static extern void CFRelease(IntPtr cf);
 }
 
  [SupportedOSPlatform("windows")]
@@ -262,7 +436,7 @@ internal sealed class LinuxSecretToolSecretStore : ICompanionSecretStore
 
     public LinuxSecretToolSecretStore(string baseDir)
     {
-        _accountName = MacOsKeychainSecretStore.BuildAccountName(baseDir);
+        _accountName = CompanionSecretStoreNaming.BuildScopedAccountName(baseDir);
     }
 
     public string StorageDescription => $"secret-service:openclaw-companion/{_accountName}";
@@ -333,11 +507,13 @@ internal sealed class UnavailableSecretStore : ICompanionSecretStore
 
 internal static class ProcessCommandSecretStore
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
+
     public static bool IsCommandAvailable(string command)
     {
         try
         {
-            var result = Run("/usr/bin/env", ["which", command]);
+            var result = Run("/usr/bin/env", ["which", command], timeout: TimeSpan.FromSeconds(3));
             return result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.StdOut);
         }
         catch
@@ -346,7 +522,7 @@ internal static class ProcessCommandSecretStore
         }
     }
 
-    public static (int ExitCode, string StdOut, string StdErr) Run(string fileName, IReadOnlyList<string> arguments, string? stdin = null)
+    public static (int ExitCode, string StdOut, string StdErr) Run(string fileName, IReadOnlyList<string> arguments, string? stdin = null, TimeSpan? timeout = null)
     {
         using var process = new Process
         {
@@ -365,15 +541,46 @@ internal static class ProcessCommandSecretStore
 
         process.Start();
 
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+
         if (stdin is not null)
         {
             process.StandardInput.Write(stdin);
             process.StandardInput.Close();
         }
 
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return (process.ExitCode, stdout, stderr);
+        var effectiveTimeout = timeout ?? DefaultTimeout;
+        using var cts = new CancellationTokenSource(effectiveTimeout);
+        try
+        {
+            process.WaitForExitAsync(cts.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            Task.WaitAll([stdoutTask, stderrTask], TimeSpan.FromSeconds(2));
+            var timedOutStdOut = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : string.Empty;
+            var timedOutStdErr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : string.Empty;
+            var timeoutMessage = $"Secure store command '{fileName}' timed out after {effectiveTimeout.TotalSeconds:0.#} seconds.";
+            timedOutStdErr = string.IsNullOrWhiteSpace(timedOutStdErr)
+                ? timeoutMessage
+                : $"{timedOutStdErr.TrimEnd()}{Environment.NewLine}{timeoutMessage}";
+            return (-1, timedOutStdOut, timedOutStdErr);
+        }
+
+        return (process.ExitCode, stdoutTask.GetAwaiter().GetResult(), stderrTask.GetAwaiter().GetResult());
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+        }
     }
 }

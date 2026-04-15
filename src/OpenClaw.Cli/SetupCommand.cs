@@ -422,7 +422,7 @@ internal static class SetupCommand
     {
         try
         {
-            var process = new System.Diagnostics.Process
+            using var process = new System.Diagnostics.Process
             {
                 StartInfo = new System.Diagnostics.ProcessStartInfo
                 {
@@ -435,7 +435,19 @@ internal static class SetupCommand
             };
 
             process.Start();
-            process.WaitForExit(3000);
+            if (!process.WaitForExit(3000))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+
+                return [failureMessage];
+            }
+
             if (process.ExitCode == 0)
                 return [];
         }

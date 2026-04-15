@@ -324,6 +324,9 @@ public sealed class GatewayAdminEndpointTests
         Assert.Contains(diff, entry => entry.GetProperty("path").GetString() == "preferences" &&
                                        entry.GetProperty("before").GetString()!.Contains("terse", StringComparison.Ordinal) &&
                                        entry.GetProperty("after").GetString()!.Contains("weekly-digest", StringComparison.Ordinal));
+        Assert.Contains(diff, entry => entry.GetProperty("path").GetString() == "facts" &&
+                                       entry.GetProperty("before").GetString()!.Contains("confidence:0.6", StringComparison.Ordinal) &&
+                                       entry.GetProperty("after").GetString()!.Contains("confidence:0.7", StringComparison.Ordinal));
         var sourceSessions = payload.RootElement.GetProperty("provenance").GetProperty("sourceSessionIds").EnumerateArray().Select(static item => item.GetString()).OfType<string>().ToArray();
         Assert.Equal(["sess-1", "sess-2"], sourceSessions);
     }
@@ -605,6 +608,30 @@ public sealed class GatewayAdminEndpointTests
         Assert.Equal(HttpStatusCode.OK, automationResponse.StatusCode);
         using var automationPayload = await ReadJsonAsync(automationResponse);
         Assert.Equal("Daily memory digest", automationPayload.RootElement.GetProperty("automation").GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task AdminMemoryEndpoints_RejectInvalidKeys()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+
+        using var detailRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/memory/notes/bad..key");
+        detailRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var detailResponse = await harness.Client.SendAsync(detailRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, detailResponse.StatusCode);
+
+        using var deleteRequest = new HttpRequestMessage(HttpMethod.Delete, "/admin/memory/notes/bad..key");
+        deleteRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var deleteResponse = await harness.Client.SendAsync(deleteRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, deleteResponse.StatusCode);
+
+        using var importRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/memory/import")
+        {
+            Content = JsonContent("""{"notes":[{"key":"bad..key","displayKey":"bad..key","memoryClass":"general","preview":"bad","content":"bad"}],"profiles":[],"proposals":[],"automations":[]}""")
+        };
+        importRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var importResponse = await harness.Client.SendAsync(importRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, importResponse.StatusCode);
     }
 
     [Fact]

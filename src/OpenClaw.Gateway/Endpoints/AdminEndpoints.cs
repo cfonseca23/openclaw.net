@@ -771,8 +771,17 @@ internal static class AdminEndpoints
             if (authResult.Failure is not null)
                 return authResult.Failure;
 
-            var decodedKey = Uri.UnescapeDataString(key);
-            var content = await memoryStore.LoadNoteAsync(decodedKey, ctx.RequestAborted);
+            var keyError = InputSanitizer.CheckMemoryKey(key);
+            if (keyError is not null)
+            {
+                return Results.BadRequest(new MutationResponse
+                {
+                    Success = false,
+                    Error = keyError
+                });
+            }
+
+            var content = await memoryStore.LoadNoteAsync(key, ctx.RequestAborted);
             if (content is null)
             {
                 return Results.NotFound(new MutationResponse
@@ -784,12 +793,12 @@ internal static class AdminEndpoints
 
             var updatedAt = DateTimeOffset.UtcNow;
             if (memoryCatalog is not null)
-                updatedAt = (await memoryCatalog.GetNoteEntryAsync(decodedKey, ctx.RequestAborted))?.UpdatedAt ?? updatedAt;
+                updatedAt = (await memoryCatalog.GetNoteEntryAsync(key, ctx.RequestAborted))?.UpdatedAt ?? updatedAt;
 
             return Results.Json(
                 new MemoryNoteDetailResponse
                 {
-                    Note = MapMemoryNoteItem(decodedKey, content, updatedAt, includeContent: true)
+                    Note = MapMemoryNoteItem(key, content, updatedAt, includeContent: true)
                 },
                 CoreJsonContext.Default.MemoryNoteDetailResponse);
         });
@@ -868,8 +877,17 @@ internal static class AdminEndpoints
                 return authResult.Failure;
             var auth = authResult.Authorization!;
 
-            var decodedKey = Uri.UnescapeDataString(key);
-            var previousContent = await memoryStore.LoadNoteAsync(decodedKey, ctx.RequestAborted);
+            var keyError = InputSanitizer.CheckMemoryKey(key);
+            if (keyError is not null)
+            {
+                return Results.BadRequest(new MutationResponse
+                {
+                    Success = false,
+                    Error = keyError
+                });
+            }
+
+            var previousContent = await memoryStore.LoadNoteAsync(key, ctx.RequestAborted);
             if (previousContent is null)
             {
                 return Results.NotFound(new MutationResponse
@@ -879,7 +897,7 @@ internal static class AdminEndpoints
                 });
             }
 
-            await memoryStore.DeleteNoteAsync(decodedKey, ctx.RequestAborted);
+            await memoryStore.DeleteNoteAsync(key, ctx.RequestAborted);
             operations.RuntimeEvents.Append(new RuntimeEventEntry
             {
                 Id = $"evt_{Guid.NewGuid():N}"[..20],
@@ -887,9 +905,9 @@ internal static class AdminEndpoints
                 Component = "memory",
                 Action = "note_deleted",
                 Severity = "warning",
-                Summary = $"Deleted memory note '{decodedKey}'."
+                Summary = $"Deleted memory note '{key}'."
             });
-            RecordOperatorAudit(ctx, operations, auth, "memory_note_delete", decodedKey, $"Deleted memory note '{decodedKey}'.", success: true, before: previousContent, after: null);
+            RecordOperatorAudit(ctx, operations, auth, "memory_note_delete", key, $"Deleted memory note '{key}'.", success: true, before: previousContent, after: null);
 
             return Results.Json(
                 new MutationResponse
@@ -984,6 +1002,20 @@ internal static class AdminEndpoints
             var profilesImported = 0;
             var proposalsImported = 0;
             var automationsImported = 0;
+
+            var invalidNoteKeys = bundle.Notes
+                .Where(static note => !string.IsNullOrWhiteSpace(note.Key) && note.Content is not null)
+                .Select(static note => new { note.Key, Error = InputSanitizer.CheckMemoryKey(note.Key) })
+                .Where(static item => item.Error is not null)
+                .ToArray();
+            if (invalidNoteKeys.Length > 0)
+            {
+                return Results.BadRequest(new MutationResponse
+                {
+                    Success = false,
+                    Error = $"Memory import contains invalid note keys: {string.Join(", ", invalidNoteKeys.Select(static item => item.Key))}."
+                });
+            }
 
             foreach (var note in bundle.Notes.Where(static note => !string.IsNullOrWhiteSpace(note.Key) && note.Content is not null))
             {

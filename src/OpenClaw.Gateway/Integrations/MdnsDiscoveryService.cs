@@ -13,7 +13,9 @@ namespace OpenClaw.Gateway.Integrations;
 /// </summary>
 internal sealed class MdnsDiscoveryService : IAsyncDisposable
 {
-    private static readonly IPAddress MulticastAddress = IPAddress.Parse("224.0.0.251");
+    private static readonly IPAddress MulticastAddressV4 = IPAddress.Parse("224.0.0.251");
+    private static readonly IPAddress MulticastAddressV6 = IPAddress.Parse("ff02::fb");
+    private static readonly TimeSpan AdvertisedAddressCacheTtl = TimeSpan.FromSeconds(30);
     private const int MdnsPort = 5353;
     private const string ServiceEnumerationName = "_services._dns-sd._udp.local";
 
@@ -21,9 +23,12 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
     private readonly int _gatewayPort;
     private readonly bool _authRequired;
     private readonly ILogger<MdnsDiscoveryService> _logger;
+    private readonly Lock _addressCacheLock = new();
+    private IReadOnlyList<IPAddress>? _cachedAdvertisedAddresses;
+    private DateTimeOffset _cachedAdvertisedAddressesExpiresUtc;
     private CancellationTokenSource? _cts;
-    private Task? _listenTask;
-    private UdpClient? _udp;
+    private readonly List<Task> _listenTasks = [];
+    private readonly List<UdpClient> _udpClients = [];
 
     public MdnsDiscoveryService(MdnsConfig config, int gatewayPort, bool authRequired, ILogger<MdnsDiscoveryService> logger)
     {
@@ -40,33 +45,92 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
+        var startedFamilies = new List<string>(capacity: 2);
+        TryStartListener(AddressFamily.InterNetwork, MulticastAddressV4, IPAddress.Any, startedFamilies, _cts.Token);
+        TryStartListener(AddressFamily.InterNetworkV6, MulticastAddressV6, IPAddress.IPv6Any, startedFamilies, _cts.Token);
+
+        if (startedFamilies.Count == 0)
+        {
+            _logger.LogWarning("Failed to start mDNS discovery. Service advertisement disabled.");
+            return;
+        }
+
+        var instanceName = _config.InstanceName ?? Environment.MachineName;
+        var port = _config.Port > 0 ? _config.Port : _gatewayPort;
+        _logger.LogInformation(
+            "mDNS discovery started: {Instance}.{ServiceType}.local on port {Port} ({Families}).",
+            instanceName,
+            _config.ServiceType,
+            port,
+            string.Join(", ", startedFamilies));
+    }
+
+    private void TryStartListener(AddressFamily addressFamily, IPAddress multicastAddress, IPAddress bindAddress, ICollection<string> startedFamilies, CancellationToken ct)
+    {
         try
         {
-            _udp = new UdpClient(AddressFamily.InterNetwork);
-            _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _udp.Client.Bind(new IPEndPoint(IPAddress.Any, MdnsPort));
-            _udp.JoinMulticastGroup(MulticastAddress);
-
-            _listenTask = ListenLoopAsync(_cts.Token);
-
-            var instanceName = _config.InstanceName ?? Environment.MachineName;
-            var port = _config.Port > 0 ? _config.Port : _gatewayPort;
-            _logger.LogInformation("mDNS discovery started: {Instance}.{ServiceType}.local on port {Port}.",
-                instanceName, _config.ServiceType, port);
+            var udp = CreateListenerSocket(addressFamily, multicastAddress, bindAddress);
+            _udpClients.Add(udp);
+            _listenTasks.Add(ListenLoopAsync(udp, new IPEndPoint(multicastAddress, MdnsPort), ct));
+            startedFamilies.Add(addressFamily == AddressFamily.InterNetwork ? "IPv4" : "IPv6");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to start mDNS discovery. Service advertisement disabled.");
+            _logger.LogDebug(ex, "Failed to start {Family} mDNS listener.", addressFamily);
         }
     }
 
-    private async Task ListenLoopAsync(CancellationToken ct)
+    private static UdpClient CreateListenerSocket(AddressFamily addressFamily, IPAddress multicastAddress, IPAddress bindAddress)
+    {
+        var udp = new UdpClient(addressFamily);
+        udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        if (addressFamily == AddressFamily.InterNetworkV6)
+            udp.Client.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, true);
+
+        udp.Client.Bind(new IPEndPoint(bindAddress, MdnsPort));
+        if (addressFamily == AddressFamily.InterNetworkV6)
+            JoinIpv6MulticastGroups(udp, multicastAddress);
+        else
+            udp.JoinMulticastGroup(multicastAddress);
+        return udp;
+    }
+
+    private static void JoinIpv6MulticastGroups(UdpClient udp, IPAddress multicastAddress)
+    {
+        var joined = false;
+        foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (networkInterface.OperationalStatus != OperationalStatus.Up ||
+                networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+            {
+                continue;
+            }
+
+            var index = networkInterface.GetIPProperties().GetIPv6Properties()?.Index ?? 0;
+            if (index <= 0)
+                continue;
+
+            try
+            {
+                udp.JoinMulticastGroup(index, multicastAddress);
+                joined = true;
+            }
+            catch (SocketException)
+            {
+            }
+        }
+
+        if (!joined)
+            udp.JoinMulticastGroup(0, multicastAddress);
+    }
+
+    private async Task ListenLoopAsync(UdpClient udp, IPEndPoint responseEndpoint, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                var result = await _udp!.ReceiveAsync(ct);
+                var result = await udp.ReceiveAsync(ct);
                 if (!TryParseQuery(result.Buffer, out var transactionId, out var questions))
                     continue;
 
@@ -83,10 +147,9 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
                     hostName,
                     port,
                     _authRequired,
-                    GetAdvertisedAddresses());
+                    GetCachedAdvertisedAddresses());
 
-                var endpoint = new IPEndPoint(MulticastAddress, MdnsPort);
-                await _udp.SendAsync(response, endpoint, ct);
+                await udp.SendAsync(response, responseEndpoint, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -214,6 +277,23 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
             .ToArray();
     }
 
+    private IReadOnlyList<IPAddress> GetCachedAdvertisedAddresses()
+    {
+        lock (_addressCacheLock)
+        {
+            if (_cachedAdvertisedAddresses is not null && _cachedAdvertisedAddressesExpiresUtc > DateTimeOffset.UtcNow)
+                return _cachedAdvertisedAddresses;
+        }
+
+        var refreshed = GetAdvertisedAddresses();
+        lock (_addressCacheLock)
+        {
+            _cachedAdvertisedAddresses = refreshed;
+            _cachedAdvertisedAddressesExpiresUtc = DateTimeOffset.UtcNow.Add(AdvertisedAddressCacheTtl);
+            return _cachedAdvertisedAddresses;
+        }
+    }
+
     private static string[] BuildTxtValues(int port, bool authRequired)
         =>
         [
@@ -299,12 +379,14 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cts?.Cancel();
-        if (_listenTask is not null)
+        if (_listenTasks.Count > 0)
         {
-            try { await _listenTask; } catch (OperationCanceledException) { }
+            try { await Task.WhenAll(_listenTasks); } catch (OperationCanceledException) { }
         }
 
-        _udp?.Dispose();
+        foreach (var udp in _udpClients)
+            udp.Dispose();
+
         _cts?.Dispose();
     }
 
