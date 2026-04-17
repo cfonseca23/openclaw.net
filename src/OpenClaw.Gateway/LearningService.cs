@@ -93,7 +93,7 @@ internal sealed class LearningService
             return;
 
         var lastUser = session.History.LastOrDefault(static turn => string.Equals(turn.Role, "user", StringComparison.OrdinalIgnoreCase));
-        var lastAssistant = session.History.LastOrDefault(static turn => string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase));
+        var lastAssistant = session.History.LastOrDefault(static turn => string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) && turn.ToolCalls is { Count: > 1 });
         if (lastUser is null)
             return;
 
