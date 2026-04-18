@@ -105,7 +105,8 @@ public sealed class AgentRuntime : IAgentRuntime
         Func<Session, bool>? isContractTokenBudgetExceeded = null,
         Func<Session, bool>? isContractRuntimeBudgetExceeded = null,
         Action<Session, string, string, long, long>? recordContractTurnUsage = null,
-        Action<Session, string>? appendContractSnapshot = null)
+        Action<Session, string>? appendContractSnapshot = null,
+        ToolAuditLog? toolAuditLog = null)
     {
         _chatClient = chatClient;
         _tools = tools;
@@ -149,7 +150,8 @@ public sealed class AgentRuntime : IAgentRuntime
             toolSandbox: toolSandbox,
             toolUsageTracker: toolUsageTracker,
             executionRouter: executionRouter,
-            toolPresetResolver: toolPresetResolver);
+            toolPresetResolver: toolPresetResolver,
+            auditLog: toolAuditLog);
         _sessionTokenBudget = sessionTokenBudget;
         _estimateTokenBudgetAdmission = gatewayConfig?.EnableEstimatedTokenAdmissionControl ?? false;
         _recall = recall;

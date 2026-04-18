@@ -46,7 +46,8 @@ public sealed class NativeAgentRuntimeFactory : IAgentRuntimeFactory
             isContractTokenBudgetExceeded: context.IsContractTokenBudgetExceeded,
             isContractRuntimeBudgetExceeded: context.IsContractRuntimeBudgetExceeded,
             recordContractTurnUsage: context.RecordContractTurnUsage,
-            appendContractSnapshot: context.AppendContractSnapshot);
+            appendContractSnapshot: context.AppendContractSnapshot,
+            toolAuditLog: context.ToolAuditLog);
 
     public IAgentRuntime Create(AgentRuntimeFactoryContext context)
     {

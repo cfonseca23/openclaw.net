@@ -35,6 +35,7 @@ public sealed class OpenClawToolExecutor
     private readonly ToolUsageTracker? _toolUsageTracker;
     private readonly ToolExecutionRouter _executionRouter;
     private readonly IToolPresetResolver? _toolPresetResolver;
+    private readonly ToolAuditLog? _auditLog;
 
     public OpenClawToolExecutor(
         IReadOnlyList<ITool> tools,
@@ -48,7 +49,8 @@ public sealed class OpenClawToolExecutor
         IToolSandbox? toolSandbox = null,
         ToolUsageTracker? toolUsageTracker = null,
         ToolExecutionRouter? executionRouter = null,
-        IToolPresetResolver? toolPresetResolver = null)
+        IToolPresetResolver? toolPresetResolver = null,
+        ToolAuditLog? auditLog = null)
     {
         _toolsByName = tools.ToDictionary(t => t.Name, StringComparer.Ordinal);
         _toolDeclarations = tools.Select(CreateDeclaration).Cast<AITool>().ToArray();
@@ -74,6 +76,7 @@ public sealed class OpenClawToolExecutor
         _toolUsageTracker = toolUsageTracker;
         _executionRouter = executionRouter ?? new ToolExecutionRouter(_config, _toolSandbox, logger);
         _toolPresetResolver = toolPresetResolver;
+        _auditLog = auditLog;
     }
 
     public IList<AITool> ToolDeclarations => _toolDeclarations;
@@ -252,8 +255,26 @@ public sealed class OpenClawToolExecutor
         sw.Stop();
 
         _metrics?.IncrementToolCalls();
+        Telemetry.ToolExecutionDuration.Record(
+            sw.Elapsed.TotalMilliseconds,
+            new KeyValuePair<string, object?>("tool.name", tool.Name),
+            new KeyValuePair<string, object?>("tool.success", !toolFailed));
         turnCtx.RecordToolCall(sw.Elapsed, toolFailed, toolTimedOut);
         _toolUsageTracker?.RecordToolCall(tool.Name, sw.Elapsed, toolFailed, toolTimedOut);
+        _auditLog?.Record(new ToolAuditEntry
+        {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            ToolName = tool.Name,
+            SessionId = session.Id,
+            ChannelId = session.ChannelId,
+            SenderId = session.SenderId,
+            CorrelationId = turnCtx.CorrelationId,
+            DurationMs = sw.Elapsed.TotalMilliseconds,
+            Failed = toolFailed,
+            TimedOut = toolTimedOut,
+            ArgumentsBytes = argsJson.Length,
+            ResultBytes = result.Length
+        });
         _logger?.LogDebug("[{CorrelationId}] Tool {Tool} completed in {Duration}ms ok={Ok}",
             turnCtx.CorrelationId,
             tool.Name,

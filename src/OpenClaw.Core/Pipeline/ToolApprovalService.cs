@@ -57,6 +57,11 @@ public sealed class ToolApprovalService
 
     private readonly ConcurrentDictionary<string, Pending> _pending = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Current number of pending approval requests. Used by observability (openclaw.approval.queue.depth gauge).
+    /// </summary>
+    public int PendingCount => _pending.Count;
+
     public ToolApprovalRequest Create(
         string sessionId,
         string channelId,

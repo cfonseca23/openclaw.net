@@ -159,7 +159,28 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
             await LoadPluginAsync(plugin, ct);
         }
 
+        EmitDiagnosticsAsStructuredLogs();
+
         return _tools;
+    }
+
+    private void EmitDiagnosticsAsStructuredLogs()
+    {
+        foreach (var report in _reports)
+        {
+            foreach (var diag in report.Diagnostics)
+            {
+                var level = diag.Severity switch
+                {
+                    "error" => LogLevel.Error,
+                    "warning" => LogLevel.Warning,
+                    _ => LogLevel.Information
+                };
+                _logger.Log(level,
+                    "Plugin {PluginId} diagnostic [{Code}] on surface {Surface}: {Message} (path={Path})",
+                    report.PluginId, diag.Code, diag.Surface, diag.Message, diag.Path);
+            }
+        }
     }
 
     public void RegisterCommandsWith(ChatCommandProcessor processor)

@@ -26,6 +26,32 @@ internal static class DiagnosticsEndpoints
                 CoreJsonContext.Default.HealthResponse);
         });
 
+        // Unauthenticated liveness probe: the process is up. Intended for load balancer / K8s probes.
+        app.MapGet("/health/live", () =>
+            Results.Json(
+                new HealthResponse { Status = "ok", Uptime = Environment.TickCount64 },
+                CoreJsonContext.Default.HealthResponse));
+
+        // Unauthenticated readiness probe: the runtime is initialized and can serve traffic.
+        // Does not leak config. Returns 503 if the session manager is missing or an internal error occurs.
+        app.MapGet("/health/ready", () =>
+        {
+            try
+            {
+                _ = runtime.SessionManager.ActiveCount;
+                return Results.Json(
+                    new HealthResponse { Status = "ready", Uptime = Environment.TickCount64 },
+                    CoreJsonContext.Default.HealthResponse);
+            }
+            catch
+            {
+                return Results.Json(
+                    new HealthResponse { Status = "not_ready", Uptime = Environment.TickCount64 },
+                    CoreJsonContext.Default.HealthResponse,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
+
         app.MapGet("/metrics", (HttpContext ctx) =>
         {
             if (!EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: false).IsAuthorized)
@@ -51,6 +77,17 @@ internal static class DiagnosticsEndpoints
 
             var toolTracker = app.Services.GetRequiredService<OpenClaw.Core.Observability.ToolUsageTracker>();
             return Results.Json(toolTracker.Snapshot(), CoreJsonContext.Default.ListToolUsageSnapshot);
+        });
+
+        app.MapGet("/admin/audit/tools", (HttpContext ctx, int? limit) =>
+        {
+            if (!EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: false).IsAuthorized)
+                return Results.Unauthorized();
+
+            var auditLog = app.Services.GetRequiredService<OpenClaw.Core.Observability.ToolAuditLog>();
+            var effectiveLimit = limit is > 0 and <= 1000 ? limit.Value : 100;
+            var recent = auditLog.SnapshotRecent(effectiveLimit);
+            return Results.Json(recent, CoreJsonContext.Default.IReadOnlyListToolAuditEntry);
         });
 
         app.MapGet("/memory/retention/status", async (HttpContext ctx) =>

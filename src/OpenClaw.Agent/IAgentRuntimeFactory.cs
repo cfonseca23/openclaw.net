@@ -28,6 +28,7 @@ public sealed class AgentRuntimeFactoryContext
     public required IReadOnlyList<string> ApprovalRequiredTools { get; init; }
     public IToolSandbox? ToolSandbox { get; init; }
     public ToolUsageTracker? ToolUsageTracker { get; init; }
+    public ToolAuditLog? ToolAuditLog { get; init; }
     public Func<Session, bool>? IsContractTokenBudgetExceeded { get; init; }
     public Func<Session, bool>? IsContractRuntimeBudgetExceeded { get; init; }
     public Action<Session, string, string, long, long>? RecordContractTurnUsage { get; init; }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Core.Models;
+using OpenClaw.Core.Observability;
 
 namespace OpenClaw.Gateway;
 
@@ -130,6 +131,10 @@ internal sealed class ActorRateLimitService
                 if (window.BurstCount >= policy.BurstLimit || window.SustainedCount >= policy.SustainedLimit)
                 {
                     blockedByPolicyId = policy.Id;
+                    Telemetry.RateLimitExceeded.Add(1,
+                        new KeyValuePair<string, object?>("actor.type", policy.ActorType),
+                        new KeyValuePair<string, object?>("policy.id", policy.Id),
+                        new KeyValuePair<string, object?>("endpoint.scope", policy.EndpointScope));
                     return false;
                 }
 

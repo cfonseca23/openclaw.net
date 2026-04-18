@@ -48,6 +48,11 @@ internal static class RuntimeInitializationExtensions
                 "Requester-matched HTTP tool approvals are disabled on a non-loopback bind. Enable OpenClaw:Security:RequireRequesterMatchForHttpToolApproval for safer public deployments.");
         }
         var services = ResolveRuntimeServices(app);
+
+        // Register observability gauge for pending tool approvals
+        var approvalService = app.Services.GetRequiredService<ToolApprovalService>();
+        Telemetry.RegisterApprovalQueueGauge(() => approvalService.PendingCount);
+
         var blockedPluginIds = services.PluginHealth.GetBlockedPluginIds();
         var channelComposition = await BuildChannelCompositionAsync(app, startup, services, loggerFactory);
         var builtInTools = CreateBuiltInTools(
@@ -667,6 +672,7 @@ internal static class RuntimeInitializationExtensions
             ApprovalRequiredTools = approvalRequiredTools,
             ToolSandbox = toolSandbox,
             ToolUsageTracker = services.GetRequiredService<ToolUsageTracker>(),
+            ToolAuditLog = services.GetRequiredService<ToolAuditLog>(),
             IsContractTokenBudgetExceeded = contractGovernance.IsTokenBudgetExceeded,
             IsContractRuntimeBudgetExceeded = contractGovernance.IsRuntimeBudgetExceeded,
             RecordContractTurnUsage = contractGovernance.RecordTurnUsage,

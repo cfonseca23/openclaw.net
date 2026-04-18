@@ -702,6 +702,8 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(Dictionary<string, decimal>))]
 [JsonSerializable(typeof(ToolUsageSnapshot))]
 [JsonSerializable(typeof(List<ToolUsageSnapshot>))]
+[JsonSerializable(typeof(OpenClaw.Core.Observability.ToolAuditEntry))]
+[JsonSerializable(typeof(IReadOnlyList<OpenClaw.Core.Observability.ToolAuditEntry>))]
 [JsonSerializable(typeof(OpenClaw.Core.Plugins.BridgeMediaAttachment))]
 [JsonSerializable(typeof(OpenClaw.Core.Plugins.BridgeMediaAttachment[]))]
 [JsonSerializable(typeof(OpenClaw.Core.Plugins.BridgeChannelTypingRequest))]
