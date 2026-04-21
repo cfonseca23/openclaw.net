@@ -250,7 +250,7 @@ internal static class PipelineExtensions
             ║  NativeAOT: {NativeAOT}  ║
             ╚══════════════════════════════════════════╝
             """,
-            startup.Config.BindAddress,
+            FormatBindAddressForUri(startup.Config.BindAddress),
             startup.Config.Port,
             startup.Config.Llm.Model,
             startup.RuntimeState.EffectiveModeName,
@@ -301,7 +301,18 @@ internal static class PipelineExtensions
                 return "127.0.0.1";
         }
 
-        if (bindAddress.Contains(':') && !bindAddress.StartsWith('['))
+        return FormatBindAddressForUri(bindAddress);
+    }
+
+    private static string FormatBindAddressForUri(string bindAddress)
+    {
+        if (string.IsNullOrWhiteSpace(bindAddress))
+            return bindAddress;
+
+        if (bindAddress.StartsWith('['))
+            return bindAddress;
+
+        if (bindAddress.Contains(':'))
             return $"[{bindAddress}]";
 
         return bindAddress;

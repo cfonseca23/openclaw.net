@@ -72,7 +72,7 @@ internal static class RuntimeInitializationExtensions
         {
             builtInInitError = ex.Message;
             startupLogger.LogInformation(
-                "Built-in provider '{Provider}' did not initialize at startup: {Reason}. Waiting for plugin-backed providers.",
+                "Configured provider '{Provider}' was not available via built-in initialization at startup: {Reason}. Waiting for plugin-backed providers.",
                 config.Llm.Provider,
                 ex.Message);
         }

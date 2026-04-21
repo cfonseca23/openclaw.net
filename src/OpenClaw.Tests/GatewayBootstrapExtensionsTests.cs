@@ -29,7 +29,7 @@ public sealed class GatewayBootstrapExtensionsTests
     }
 
     [Fact]
-    public void ValidateOptionalFeatureCompatibility_OpenSandboxWithoutBuildFlag_ReturnsActionableError()
+    public void ValidateOptionalFeatureCompatibility_OpenSandboxProviderConfigured_MatchesBuildFlag()
     {
         var config = new OpenClaw.Core.Models.GatewayConfig
         {
@@ -42,8 +42,15 @@ public sealed class GatewayBootstrapExtensionsTests
 
         var errors = GatewayBootstrapExtensions.ValidateOptionalFeatureCompatibility(config);
 
-        Assert.Contains(errors, error => error.Contains("OpenClawEnableOpenSandbox", StringComparison.Ordinal));
-        Assert.Contains(errors, error => error.Contains("Sandbox.Provider='None'", StringComparison.Ordinal));
+        if (OptionalFeatureSupport.OpenSandboxEnabled)
+        {
+            Assert.Empty(errors);
+        }
+        else
+        {
+            Assert.Contains(errors, error => error.Contains("OpenClawEnableOpenSandbox", StringComparison.Ordinal));
+            Assert.Contains(errors, error => error.Contains("Sandbox.Provider='None'", StringComparison.Ordinal));
+        }
     }
 
     [Fact]
