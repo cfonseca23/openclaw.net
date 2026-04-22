@@ -242,6 +242,53 @@ public sealed class OpenClawToolExecutorTests
         await sandbox.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_OperatorAuthFailure_IsClassifiedAndPersisted()
+    {
+        var tool = new ThrowingTool("This action requires operator authentication on the current surface.");
+        var executor = CreateExecutor([tool]);
+
+        var result = await executor.ExecuteAsync(
+            "auth_bound",
+            """{"action":"restricted"}""",
+            callId: null,
+            CreateSession(),
+            CreateTurnContext(),
+            isStreaming: false,
+            approvalCallback: null,
+            CancellationToken.None);
+
+        Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
+        Assert.Equal(ToolFailureCodes.OperatorAuthRequired, result.FailureCode);
+        Assert.Contains("operator authentication", result.ResultText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ToolFailureCodes.OperatorAuthRequired, result.Invocation.FailureCode);
+        Assert.Equal(ToolResultStatuses.Blocked, result.Invocation.ResultStatus);
+        Assert.Contains("browser session or operator token", result.NextStep ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RuntimeCapabilityFailure_PreservesStructuredClassification()
+    {
+        var tool = new ThrowingTool("Execution backend 'docker' is not configured.");
+        var executor = CreateExecutor([tool]);
+
+        var result = await executor.ExecuteAsync(
+            "auth_bound",
+            """{"action":"restricted"}""",
+            callId: null,
+            CreateSession(),
+            CreateTurnContext(),
+            isStreaming: false,
+            approvalCallback: null,
+            CancellationToken.None);
+
+        Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
+        Assert.Equal(ToolFailureCodes.RuntimeCapabilityUnavailable, result.FailureCode);
+        Assert.Equal(ToolFailureCodes.RuntimeCapabilityUnavailable, result.Invocation.FailureCode);
+        Assert.Contains("execution backend", result.ResultText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Configure the required execution backend or sandbox", result.NextStep ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static OpenClawToolExecutor CreateExecutor(
         IReadOnlyList<ITool> tools,
         IToolSandbox? toolSandbox = null,
@@ -317,5 +364,15 @@ public sealed class OpenClawToolExecutorTests
 
         public string FormatSandboxResult(string argumentsJson, SandboxResult result)
             => "formatted:" + result.Stdout;
+    }
+
+    private sealed class ThrowingTool(string message) : ITool
+    {
+        public string Name => "auth_bound";
+        public string Description => "Throws a classified operator auth error.";
+        public string ParameterSchema => """{"type":"object","properties":{"action":{"type":"string"}}}""";
+
+        public ValueTask<string> ExecuteAsync(string argumentsJson, CancellationToken ct)
+            => throw new InvalidOperationException(message);
     }
 }
