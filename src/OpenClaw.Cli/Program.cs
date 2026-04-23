@@ -23,11 +23,13 @@ internal static class Program
         {
             return command switch
             {
+                "start" => await StartAsync(rest),
                 "run" => await RunAsync(rest),
                 "chat" => await ChatAsync(rest),
                 "live" => await LiveAsync(rest),
                 "tui" => await TuiAsync(rest),
                 "setup" => await SetupAsync(rest),
+                "upgrade" => await UpgradeAsync(rest),
                 "init" => InitCommand.Run(rest),
                 "migrate" => await MigrateAsync(rest),
                 "heartbeat" => await HeartbeatAsync(rest),
@@ -76,12 +78,14 @@ internal static class Program
             openclaw — OpenClaw.NET CLI
 
             Usage:
+              openclaw start [options]
               openclaw run [options] <prompt>
               openclaw chat [options]
               openclaw live [options]
               openclaw tui [options]
               openclaw setup [options]
               openclaw setup <launch|service|status|verify|channel> [options]
+              openclaw upgrade <check> [options]
               openclaw init [options]
               openclaw migrate [options]
               openclaw migrate <legacy|upstream> [options]
@@ -114,6 +118,9 @@ internal static class Program
               /model <model>
 
             Examples:
+              openclaw start
+              openclaw start --with-companion --open-browser
+              openclaw start --non-interactive --profile local --workspace ./workspace --provider openai --model gpt-4o --api-key env:MODEL_PROVIDER_KEY
               openclaw run "summarize this README" --file ./README.md
               OPENCLAW_AUTH_TOKEN=... openclaw run "summarize this README" --file ./README.md
               cat error.log | openclaw run "what went wrong?"
@@ -121,6 +128,8 @@ internal static class Program
               openclaw live --model gemini-2.0-flash-live-001 --system "Be concise."
               openclaw tui
               openclaw setup
+              openclaw upgrade check
+              openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json --offline
               openclaw setup --non-interactive --profile local --workspace ./workspace --provider openai --model gpt-4o --api-key env:MODEL_PROVIDER_KEY
               openclaw setup verify --config ~/.openclaw/config/openclaw.settings.json
               openclaw setup launch --config ~/.openclaw/config/openclaw.settings.json --with-companion --open-browser
@@ -277,6 +286,7 @@ internal static class Program
               openclaw setup channel <telegram|slack|discord|teams|whatsapp> [--config <path>] [--non-interactive] [...]
 
             Notes:
+              - Prefer 'openclaw start' for the one-command local path.
               - Bare 'openclaw setup' launches a guided onboarding flow.
               - 'openclaw setup launch' starts the gateway in the current repo checkout, runs verification, and streams logs until Ctrl-C.
               - Use --with-companion to start Companion too.
@@ -288,6 +298,22 @@ internal static class Program
               - Use --non-interactive for automation or CI.
               - Writes an external JSON config file plus an adjacent env example.
               - Prints gateway, companion, doctor, and admin posture commands.
+            """);
+    }
+
+    private static void PrintUpgradeHelp()
+    {
+        Console.WriteLine(
+            """
+            openclaw upgrade
+
+            Usage:
+              openclaw upgrade check [--config <path>] [--offline]
+
+            Notes:
+              - Runs preflight checks before an upgrade.
+              - Combines setup verification, provider readiness, plugin compatibility,
+                skill compatibility, and migration-risk heuristics into one report.
             """);
     }
 
@@ -527,6 +553,24 @@ internal static class Program
         return await SetupCommand.RunAsync(args, Console.In, Console.Out, Console.Error, Directory.GetCurrentDirectory(), canPrompt: !Console.IsInputRedirected);
     }
 
+    private static async Task<int> StartAsync(string[] args)
+    {
+        var parsed = CliArgs.Parse(args);
+        if (parsed.ShowHelp)
+        {
+            StartCommand.WriteHelp(Console.Out);
+            return 0;
+        }
+
+        return await StartCommand.RunAsync(
+            args,
+            Console.In,
+            Console.Out,
+            Console.Error,
+            Directory.GetCurrentDirectory(),
+            canPrompt: !Console.IsInputRedirected);
+    }
+
     private static async Task<int> MigrateAsync(string[] args)
     {
         if (args.Length > 0 && string.Equals(args[0], "upstream", StringComparison.OrdinalIgnoreCase))
@@ -556,6 +600,17 @@ internal static class Program
         foreach (var item in migrated.Items)
             Console.WriteLine($"- {item.Id} | {item.Name} | {item.Schedule} | enabled={item.Enabled.ToString().ToLowerInvariant()} draft={item.IsDraft.ToString().ToLowerInvariant()}");
         return 0;
+    }
+
+    private static async Task<int> UpgradeAsync(string[] args)
+    {
+        if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
+        {
+            PrintUpgradeHelp();
+            return 0;
+        }
+
+        return await UpgradeCommands.RunAsync(args, Console.Out, Console.Error, Directory.GetCurrentDirectory());
     }
 
     private static async Task<int> HeartbeatAsync(string[] args)

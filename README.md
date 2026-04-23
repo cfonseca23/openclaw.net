@@ -30,8 +30,7 @@ git clone https://github.com/clawdotnet/openclaw.net
 cd openclaw.net
 
 export MODEL_PROVIDER_KEY="sk-..."
-dotnet run --project src/OpenClaw.Cli -c Release -- setup
-dotnet run --project src/OpenClaw.Cli -c Release -- setup launch --config ~/.openclaw/config/openclaw.settings.json
+dotnet run --project src/OpenClaw.Cli -c Release -- start
 ```
 
 When the gateway finishes startup it now prints explicit phase markers, a final `OpenClaw gateway ready.` block, the localhost URLs, `Ctrl-C to stop`, and any non-fatal startup notices under `Started with notices:`. Then open:
@@ -56,10 +55,12 @@ dotnet run --project src/OpenClaw.Gateway -c Release -- --quickstart
 If the CLI is already on your `PATH`, the same guided entrypoints are:
 
 ```bash
+openclaw start
 openclaw setup
 openclaw setup launch --config ~/.openclaw/config/openclaw.settings.json
 openclaw setup service --config ~/.openclaw/config/openclaw.settings.json --platform all
 openclaw setup status --config ~/.openclaw/config/openclaw.settings.json
+openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json
 ```
 
 Useful follow-up commands and surfaces:
@@ -67,6 +68,7 @@ Useful follow-up commands and surfaces:
 ```bash
 openclaw skills inspect ./skills/my-skill
 openclaw compatibility catalog
+openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json --offline
 openclaw migrate upstream --source ./upstream-agent --target-config ~/.openclaw/config/openclaw.settings.json
 ```
 

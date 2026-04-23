@@ -9,23 +9,25 @@ Welcome to the **OpenClaw.NET** User Guide! This document will walk you through 
 Start with the guided setup path:
 
 ```bash
-openclaw setup
+openclaw start
 ```
 
 From a source checkout, use:
 
 ```bash
-dotnet run --project src/OpenClaw.Cli -c Release -- setup
+dotnet run --project src/OpenClaw.Cli -c Release -- start
 ```
 
-Use `--profile public` when you are preparing a reverse-proxy or internet-facing deployment. The setup flow writes an external config file, a matching env example, and prints the exact gateway launch, `--doctor`, and `openclaw admin posture` commands for that config.
+Use `--profile public` when you are preparing a reverse-proxy or internet-facing deployment. The start/setup flow writes an external config file, a matching env example, and prints the exact gateway launch, `--doctor`, and `openclaw admin posture` commands for that config.
 
 Continue the supported bootstrap flow with:
 
 ```bash
+openclaw start
 openclaw setup launch --config ~/.openclaw/config/openclaw.settings.json
 openclaw setup service --config ~/.openclaw/config/openclaw.settings.json --platform all
 openclaw setup status --config ~/.openclaw/config/openclaw.settings.json
+openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json
 ```
 
 If you start the gateway directly from a local terminal instead of using `setup launch`, the direct fallback is:
@@ -52,6 +54,7 @@ These wizards update the existing external config and keep the readiness and adm
 
 Important distinction:
 
+- `openclaw start` is the primary one-command local entrypoint
 - `openclaw setup` and `openclaw init` generate the supported onboarding configs
 - directly editing `src/OpenClaw.Gateway/appsettings.json` is a lower-level path and can expose optional features that are not part of the easiest first run
 - direct gateway startup now prints explicit startup phases and a ready banner with `/chat`, `/admin`, `/doctor/text`, `/health`, `/mcp`, and `/ws`
