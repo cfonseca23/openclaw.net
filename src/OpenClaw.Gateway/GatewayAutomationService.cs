@@ -534,6 +534,7 @@ internal sealed class GatewayAutomationService
             Timezone = string.IsNullOrWhiteSpace(automation.Timezone) ? null : automation.Timezone.Trim(),
             Prompt = automation.Prompt ?? "",
             ModelId = string.IsNullOrWhiteSpace(automation.ModelId) ? null : automation.ModelId.Trim(),
+            ResponseMode = NormalizeResponseMode(automation.ResponseMode),
             RunOnStartup = automation.RunOnStartup,
             SessionId = string.IsNullOrWhiteSpace(automation.SessionId) ? null : automation.SessionId.Trim(),
             DeliveryChannelId = string.IsNullOrWhiteSpace(automation.DeliveryChannelId) ? "cron" : automation.DeliveryChannelId.Trim(),
@@ -561,6 +562,7 @@ internal sealed class GatewayAutomationService
             Prompt = job.Prompt ?? "",
             RunOnStartup = job.RunOnStartup,
             SessionId = job.SessionId,
+            ResponseMode = SessionResponseModes.ConciseOps,
             DeliveryChannelId = string.IsNullOrWhiteSpace(job.ChannelId) ? "cron" : job.ChannelId!,
             DeliveryRecipientId = job.RecipientId,
             DeliverySubject = job.Subject,
@@ -580,6 +582,7 @@ internal sealed class GatewayAutomationService
             Timezone = config.Timezone,
             Prompt = _heartbeat.BuildManagedPrompt(config, _heartbeat.RenderMarkdown(config)),
             ModelId = config.ModelId,
+            ResponseMode = SessionResponseModes.ConciseOps,
             DeliveryChannelId = config.DeliveryChannelId,
             DeliveryRecipientId = config.DeliveryRecipientId,
             DeliverySubject = config.DeliverySubject,
@@ -648,5 +651,16 @@ internal sealed class GatewayAutomationService
         if (string.Equals(schedule, "@monthly", StringComparison.OrdinalIgnoreCase))
             return 1;
         return 30;
+    }
+
+    private static string NormalizeResponseMode(string? responseMode)
+    {
+        var normalized = responseMode?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            SessionResponseModes.ConciseOps => SessionResponseModes.ConciseOps,
+            SessionResponseModes.Full => SessionResponseModes.Full,
+            _ => SessionResponseModes.ConciseOps
+        };
     }
 }

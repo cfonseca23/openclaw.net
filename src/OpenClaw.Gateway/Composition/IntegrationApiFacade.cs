@@ -18,6 +18,7 @@ internal sealed class IntegrationApiFacade
     private readonly IMemoryNoteCatalog? _memoryCatalog;
     private readonly IToolPresetResolver? _toolPresetResolver;
     private readonly TextToSpeechService? _textToSpeechService;
+    private readonly GatewayMaintenanceRuntimeService? _maintenanceService;
 
     public static IntegrationApiFacade Create(
         GatewayStartupContext startup,
@@ -35,6 +36,7 @@ internal sealed class IntegrationApiFacade
         var memoryCatalog = services.GetService<IMemoryStore>() as IMemoryNoteCatalog;
         var toolPresetResolver = services.GetService<IToolPresetResolver>();
         var textToSpeechService = services.GetService<TextToSpeechService>();
+        var maintenanceService = services.GetService<GatewayMaintenanceRuntimeService>();
 
         return new IntegrationApiFacade(
             startup,
@@ -46,7 +48,8 @@ internal sealed class IntegrationApiFacade
             learningService,
             memoryCatalog,
             toolPresetResolver,
-            textToSpeechService);
+            textToSpeechService,
+            maintenanceService);
     }
 
     public IntegrationApiFacade(
@@ -59,7 +62,8 @@ internal sealed class IntegrationApiFacade
         LearningService learningService,
         IMemoryNoteCatalog? memoryCatalog,
         IToolPresetResolver? toolPresetResolver,
-        TextToSpeechService? textToSpeechService)
+        TextToSpeechService? textToSpeechService,
+        GatewayMaintenanceRuntimeService? maintenanceService)
     {
         _startup = startup;
         _runtime = runtime;
@@ -71,6 +75,7 @@ internal sealed class IntegrationApiFacade
         _memoryCatalog = memoryCatalog;
         _toolPresetResolver = toolPresetResolver;
         _textToSpeechService = textToSpeechService;
+        _maintenanceService = maintenanceService;
     }
 
     public IntegrationStatusResponse BuildStatusResponse()
@@ -341,7 +346,7 @@ internal sealed class IntegrationApiFacade
             .ToArray();
         var memoryEvents = _runtime.Operations.RuntimeEvents.Query(new RuntimeEventQuery { Limit = 20, Component = "memory" });
 
-        return new OperatorDashboardSnapshot
+        var snapshot = new OperatorDashboardSnapshot
         {
             Sessions = new DashboardSessionSummary
             {
@@ -449,6 +454,23 @@ internal sealed class IntegrationApiFacade
                     pluginHealth.GroupBy(static item => item.CompatibilityStatus, StringComparer.OrdinalIgnoreCase)
                         .Select(static group => (Key: group.Key, Label: group.Key, Count: group.Count())))
             }
+        };
+
+        if (_maintenanceService is null)
+            return snapshot;
+
+        var maintenance = await _maintenanceService.ScanAsync(setupStatus: null, cancellationToken);
+        return new OperatorDashboardSnapshot
+        {
+            Sessions = snapshot.Sessions,
+            Approvals = snapshot.Approvals,
+            Memory = snapshot.Memory,
+            Automations = snapshot.Automations,
+            Learning = snapshot.Learning,
+            Delegation = snapshot.Delegation,
+            Channels = snapshot.Channels,
+            Plugins = snapshot.Plugins,
+            Reliability = maintenance.Reliability
         };
     }
 

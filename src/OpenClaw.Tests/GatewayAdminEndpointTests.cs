@@ -297,6 +297,57 @@ public sealed class GatewayAdminEndpointTests
             id => id == "caddy");
         var caddy = payload.RootElement.GetProperty("artifacts").EnumerateArray().First(item => item.GetProperty("id").GetString() == "caddy");
         Assert.True(caddy.GetProperty("exists").GetBoolean());
+        Assert.True(payload.RootElement.GetProperty("reliability").GetProperty("score").GetInt32() >= 0);
+    }
+
+    [Fact]
+    public async Task AdminMaintenance_ReportsFindings_AndFixesManagedArtifacts()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: false);
+        var adminRoot = Path.Combine(harness.StoragePath, "admin");
+        var evaluationRoot = Path.Combine(adminRoot, "model-evaluations");
+        Directory.CreateDirectory(evaluationRoot);
+        Directory.CreateDirectory(Path.Combine(harness.StoragePath, "logs"));
+
+        await File.WriteAllTextAsync(Path.Combine(harness.StoragePath, "logs", "cache-trace.jsonl"), "trace");
+        await File.WriteAllTextAsync(Path.Combine(evaluationRoot, "eval-old-01.json"), "{}");
+        await File.WriteAllTextAsync(
+            Path.Combine(adminRoot, "session-metadata.json"),
+            JsonSerializer.Serialize(
+                new List<SessionMetadataSnapshot> { new() { SessionId = "missing-session" } },
+                CoreJsonContext.Default.ListSessionMetadataSnapshot));
+
+        using var reportRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/maintenance");
+        reportRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var reportResponse = await harness.Client.SendAsync(reportRequest);
+        reportResponse.EnsureSuccessStatusCode();
+
+        using var reportPayload = await ReadJsonAsync(reportResponse);
+        Assert.True(reportPayload.RootElement.GetProperty("reliability").GetProperty("score").GetInt32() >= 0);
+        Assert.Contains(
+            reportPayload.RootElement.GetProperty("findings").EnumerateArray().Select(static item => item.GetProperty("id").GetString()).OfType<string>(),
+            id => id == "orphaned-session-metadata");
+
+        using var fixRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/maintenance/fix");
+        fixRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        fixRequest.Content = new StringContent(
+            JsonSerializer.Serialize(
+                new MaintenanceFixRequest
+                {
+                    DryRun = false,
+                    Apply = "all"
+                },
+                CoreJsonContext.Default.MaintenanceFixRequest),
+            Encoding.UTF8,
+            "application/json");
+        var fixResponse = await harness.Client.SendAsync(fixRequest);
+        fixResponse.EnsureSuccessStatusCode();
+
+        Assert.False(File.Exists(Path.Combine(harness.StoragePath, "logs", "cache-trace.jsonl")));
+        var metadata = JsonSerializer.Deserialize(
+            await File.ReadAllTextAsync(Path.Combine(adminRoot, "session-metadata.json")),
+            CoreJsonContext.Default.ListSessionMetadataSnapshot);
+        Assert.Empty(metadata ?? []);
     }
 
     [Fact]
@@ -2659,6 +2710,7 @@ public sealed class GatewayAdminEndpointTests
         Assert.True(dashboardPayload.RootElement.GetProperty("operator").GetProperty("automations").GetProperty("failing").GetInt32() >= 1);
         Assert.True(dashboardPayload.RootElement.GetProperty("operator").GetProperty("automations").GetProperty("templates").GetArrayLength() >= 2);
         Assert.True(dashboardPayload.RootElement.GetProperty("operator").GetProperty("channels").GetProperty("items").GetArrayLength() >= 1);
+        Assert.True(dashboardPayload.RootElement.GetProperty("operator").GetProperty("reliability").GetProperty("score").GetInt32() >= 0);
 
         using var approvalsRequest = new HttpRequestMessage(HttpMethod.Get, "/api/integration/approvals?channelId=api&senderId=user-dashboard");
         approvalsRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
