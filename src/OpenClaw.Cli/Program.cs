@@ -85,7 +85,7 @@ internal static class Program
               openclaw tui [options]
               openclaw setup [options]
               openclaw setup <launch|service|status|verify|channel> [options]
-              openclaw upgrade <check> [options]
+              openclaw upgrade <check|rollback> [options]
               openclaw init [options]
               openclaw migrate [options]
               openclaw migrate <legacy|upstream> [options]
@@ -130,6 +130,7 @@ internal static class Program
               openclaw setup
               openclaw upgrade check
               openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json --offline
+              openclaw upgrade rollback --config ~/.openclaw/config/openclaw.settings.json --offline
               openclaw setup --non-interactive --profile local --workspace ./workspace --provider openai --model gpt-4o --api-key env:MODEL_PROVIDER_KEY
               openclaw setup verify --config ~/.openclaw/config/openclaw.settings.json
               openclaw setup launch --config ~/.openclaw/config/openclaw.settings.json --with-companion --open-browser
@@ -309,11 +310,15 @@ internal static class Program
 
             Usage:
               openclaw upgrade check [--config <path>] [--offline]
+              openclaw upgrade rollback [--config <path>] [--offline] [--require-provider]
 
             Notes:
               - Runs preflight checks before an upgrade.
               - Combines setup verification, provider readiness, plugin compatibility,
                 skill compatibility, and migration-risk heuristics into one report.
+              - Captures a last-known-good config/env/deploy snapshot when preflight succeeds.
+              - 'rollback' restores the saved snapshot and reruns setup verification.
+              - Returns a non-zero exit code when blocking issues are found.
             """);
     }
 

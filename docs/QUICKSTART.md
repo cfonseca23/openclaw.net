@@ -111,6 +111,12 @@ OPENCLAW_BASE_URL=http://127.0.0.1:18789 OPENCLAW_AUTH_TOKEN=... openclaw admin 
 openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json
 ```
 
+That preflight now also captures a last-known-good snapshot of the generated config, env example, and deploy artifacts. If an upgrade regresses the setup, restore it with:
+
+```bash
+openclaw upgrade rollback --config ~/.openclaw/config/openclaw.settings.json --offline
+```
+
 Default local endpoints:
 
 - Web UI: `http://127.0.0.1:18789/chat`

@@ -61,6 +61,7 @@ openclaw setup launch --config ~/.openclaw/config/openclaw.settings.json
 openclaw setup service --config ~/.openclaw/config/openclaw.settings.json --platform all
 openclaw setup status --config ~/.openclaw/config/openclaw.settings.json
 openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json
+openclaw upgrade rollback --config ~/.openclaw/config/openclaw.settings.json --offline
 ```
 
 Useful follow-up commands and surfaces:
@@ -69,6 +70,7 @@ Useful follow-up commands and surfaces:
 openclaw skills inspect ./skills/my-skill
 openclaw compatibility catalog
 openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json --offline
+openclaw upgrade rollback --config ~/.openclaw/config/openclaw.settings.json --offline
 openclaw migrate upstream --source ./upstream-agent --target-config ~/.openclaw/config/openclaw.settings.json
 ```
 

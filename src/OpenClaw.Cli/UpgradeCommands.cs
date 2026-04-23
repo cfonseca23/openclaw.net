@@ -22,6 +22,7 @@ internal static class UpgradeCommands
         return subcommand switch
         {
             "check" => await RunCheckAsync(rest, output, error, currentDirectory),
+            "rollback" => await RunRollbackAsync(rest, output, error),
             _ => UnknownSubcommand(subcommand, output, error)
         };
     }
@@ -53,12 +54,18 @@ internal static class UpgradeCommands
         var plugins = EvaluatePlugins(config, workspacePath);
         var skills = EvaluateSkills(config, workspacePath);
         var migrationImpact = EvaluateMigrationImpact(configPath, config);
+        var rollbackSnapshot = EvaluateRollbackSnapshot(configPath, workspacePath, offline, !offline, AggregateStatus(
+            verification.Status,
+            plugins.Status,
+            skills.Status,
+            migrationImpact.Status));
 
         var overall = AggregateStatus(
             verification.Status,
             plugins.Status,
             skills.Status,
-            migrationImpact.Status);
+            migrationImpact.Status,
+            rollbackSnapshot.Status);
 
         output.WriteLine("OpenClaw upgrade preflight");
         output.WriteLine($"Config: {configPath}");
@@ -70,11 +77,13 @@ internal static class UpgradeCommands
         WriteCheck(output, plugins);
         WriteCheck(output, skills);
         WriteCheck(output, migrationImpact);
+        WriteCheck(output, rollbackSnapshot);
 
         var nextActions = verification.NextActions
             .Concat(plugins.NextActions)
             .Concat(skills.NextActions)
             .Concat(migrationImpact.NextActions)
+            .Concat(rollbackSnapshot.NextActions)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
@@ -94,6 +103,57 @@ internal static class UpgradeCommands
         }
 
         return 0;
+    }
+
+    private static async Task<int> RunRollbackAsync(string[] args, TextWriter output, TextWriter error)
+    {
+        var parsed = CliArgs.Parse(args);
+        if (parsed.ShowHelp)
+        {
+            PrintHelp(output);
+            return 0;
+        }
+
+        var configPath = ResolveConfigPath(parsed);
+        var store = new UpgradeRollbackSnapshotStore(configPath);
+        var snapshot = store.Load();
+        if (snapshot is null)
+        {
+            error.WriteLine($"No rollback snapshot was found for {configPath}. Run 'openclaw upgrade check --config {GatewayConfigFile.QuoteIfNeeded(configPath)}' before upgrading.");
+            return 1;
+        }
+
+        try
+        {
+            RestoreSnapshot(snapshot, store);
+        }
+        catch (Exception ex)
+        {
+            error.WriteLine($"Failed to restore rollback snapshot: {ex.Message}");
+            return 1;
+        }
+
+        output.WriteLine("Restored last-known-good setup snapshot.");
+        output.WriteLine($"Config: {configPath}");
+        output.WriteLine($"Captured at: {snapshot.CreatedAtUtc:O}");
+        output.WriteLine($"Captured by: openclaw {snapshot.CreatedByVersion}");
+        output.WriteLine($"Snapshot directory: {store.SnapshotDirectory}");
+
+        var currentVersion = GetCurrentVersion();
+        if (!string.Equals(snapshot.CreatedByVersion, currentVersion, StringComparison.Ordinal))
+            output.WriteLine($"Current CLI version: openclaw {currentVersion}");
+
+        output.WriteLine();
+        output.WriteLine("Re-running setup verification on the restored files...");
+        var verifyExitCode = await SetupLifecycleCommand.RunVerifyAsync(BuildRollbackVerifyArgs(configPath, parsed, snapshot), output, error);
+        if (verifyExitCode == 0)
+        {
+            output.WriteLine();
+            output.WriteLine("Rollback completed successfully.");
+            output.WriteLine($"Gateway doctor: dotnet run --project src/OpenClaw.Gateway -c Release -- --config {GatewayConfigFile.QuoteIfNeeded(configPath)} --doctor");
+        }
+
+        return verifyExitCode;
     }
 
     private static async Task<UpgradeCheckSummary> EvaluateVerificationAsync(GatewayConfig config, string? workspacePath, bool offline)
@@ -298,6 +358,67 @@ internal static class UpgradeCommands
             nextActions);
     }
 
+    private static UpgradeCheckSummary EvaluateRollbackSnapshot(
+        string configPath,
+        string? workspacePath,
+        bool offline,
+        bool requireProvider,
+        string preflightStatus)
+    {
+        if (string.Equals(preflightStatus, SetupCheckStates.Fail, StringComparison.Ordinal))
+        {
+            return new UpgradeCheckSummary(
+                "Rollback snapshot",
+                SetupCheckStates.Skip,
+                "Snapshot not updated because the preflight already found blocking issues.",
+                ["[skip] Resolve the blocking issues and rerun 'openclaw upgrade check' to refresh the last-known-good snapshot."],
+                ["Resolve the blocking upgrade issues before relying on rollback protection."]);
+        }
+
+        var captureItems = BuildRollbackCaptureItems(configPath);
+        var snapshot = new UpgradeRollbackSnapshot
+        {
+            CreatedByVersion = GetCurrentVersion(),
+            ConfigPath = configPath,
+            WorkspacePath = workspacePath,
+            VerificationStatus = preflightStatus,
+            Offline = offline,
+            RequireProvider = requireProvider,
+            Artifacts = captureItems
+                .Select(static item => new UpgradeRollbackSnapshotArtifact
+                {
+                    Kind = item.Kind,
+                    TargetPath = item.TargetPath,
+                    Exists = item.Exists,
+                    IsDirectory = item.IsDirectory,
+                    SnapshotRelativePath = item.SnapshotRelativePath
+                })
+                .ToArray()
+        };
+
+        var store = new UpgradeRollbackSnapshotStore(configPath);
+        if (!store.Save(snapshot, payloadRoot => CaptureSnapshotArtifacts(captureItems, payloadRoot), out var error))
+        {
+            return new UpgradeCheckSummary(
+                "Rollback snapshot",
+                SetupCheckStates.Fail,
+                "Failed to save the last-known-good rollback snapshot.",
+                [$"[{SetupCheckStates.Fail}] {error ?? "Unknown snapshot persistence error."}"],
+                ["Fix snapshot storage permissions or disk space, then rerun 'openclaw upgrade check' before upgrading."]);
+        }
+
+        var artifactSummary = $"{snapshot.Artifacts.Count(static artifact => artifact.Exists)} artifact(s) captured; {snapshot.Artifacts.Count(static artifact => !artifact.Exists)} tracked as absent.";
+        return new UpgradeCheckSummary(
+            "Rollback snapshot",
+            SetupCheckStates.Pass,
+            $"Saved the last-known-good setup snapshot. {artifactSummary}",
+            [
+                $"[{SetupCheckStates.Pass}] Snapshot directory: {store.SnapshotDirectory}",
+                $"[{SetupCheckStates.Pass}] Rollback command: openclaw upgrade rollback --config {GatewayConfigFile.QuoteIfNeeded(configPath)}"
+            ],
+            [$"Use 'openclaw upgrade rollback --config {GatewayConfigFile.QuoteIfNeeded(configPath)}' to restore this snapshot if the upgrade regresses your setup."]);
+    }
+
     private static IEnumerable<(string Path, SkillSource Source)> EnumerateSkillRoots(GatewayConfig config, string? workspacePath)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -421,6 +542,104 @@ internal static class UpgradeCommands
     private static string ResolveConfigPath(CliArgs parsed)
         => Path.GetFullPath(GatewaySetupPaths.ExpandPath(parsed.GetOption("--config") ?? GatewaySetupPaths.DefaultConfigPath));
 
+    private static string[] BuildRollbackVerifyArgs(string configPath, CliArgs parsed, UpgradeRollbackSnapshot snapshot)
+    {
+        var args = new List<string>
+        {
+            "--config",
+            configPath
+        };
+
+        if (parsed.HasFlag("--offline") || snapshot.Offline)
+            args.Add("--offline");
+        if (parsed.HasFlag("--require-provider") || snapshot.RequireProvider)
+            args.Add("--require-provider");
+
+        return [.. args];
+    }
+
+    private static IReadOnlyList<RollbackCaptureItem> BuildRollbackCaptureItems(string configPath)
+    {
+        var envExamplePath = GatewaySetupArtifacts.BuildEnvExamplePath(configPath);
+        var deployDirectory = SetupLifecycleCommand.GetDeployDirectory(configPath);
+
+        return
+        [
+            new RollbackCaptureItem("config", configPath, configPath, false, File.Exists(configPath), "config.json"),
+            new RollbackCaptureItem("env_example", envExamplePath, envExamplePath, false, File.Exists(envExamplePath), "env.example"),
+            new RollbackCaptureItem("deploy", deployDirectory, deployDirectory, true, Directory.Exists(deployDirectory), "deploy")
+        ];
+    }
+
+    private static void CaptureSnapshotArtifacts(IReadOnlyList<RollbackCaptureItem> items, string payloadRoot)
+    {
+        foreach (var item in items.Where(static item => item.Exists && !string.IsNullOrWhiteSpace(item.SnapshotRelativePath)))
+        {
+            var destination = Path.Combine(payloadRoot, item.SnapshotRelativePath!);
+            if (item.IsDirectory)
+                CopyDirectory(item.SourcePath, destination);
+            else
+                CopyFile(item.SourcePath, destination);
+        }
+    }
+
+    private static void RestoreSnapshot(UpgradeRollbackSnapshot snapshot, UpgradeRollbackSnapshotStore store)
+    {
+        foreach (var artifact in snapshot.Artifacts)
+        {
+            if (artifact.Exists)
+            {
+                if (string.IsNullOrWhiteSpace(artifact.SnapshotRelativePath))
+                    throw new InvalidOperationException($"Snapshot artifact '{artifact.Kind}' is missing its payload path.");
+
+                var payloadPath = store.ResolvePayloadPath(artifact.SnapshotRelativePath);
+                if (artifact.IsDirectory)
+                    ReplaceDirectory(payloadPath, artifact.TargetPath);
+                else
+                    CopyFile(payloadPath, artifact.TargetPath);
+                continue;
+            }
+
+            if (artifact.IsDirectory)
+            {
+                if (Directory.Exists(artifact.TargetPath))
+                    Directory.Delete(artifact.TargetPath, recursive: true);
+            }
+            else if (File.Exists(artifact.TargetPath))
+            {
+                File.Delete(artifact.TargetPath);
+            }
+        }
+    }
+
+    private static void CopyFile(string sourcePath, string destinationPath)
+    {
+        var directory = Path.GetDirectoryName(destinationPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+        File.Copy(sourcePath, destinationPath, overwrite: true);
+    }
+
+    private static void CopyDirectory(string sourcePath, string destinationPath)
+    {
+        Directory.CreateDirectory(destinationPath);
+        foreach (var directory in Directory.GetDirectories(sourcePath, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(Path.Combine(destinationPath, Path.GetRelativePath(sourcePath, directory)));
+
+        foreach (var file in Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourcePath, file);
+            CopyFile(file, Path.Combine(destinationPath, relative));
+        }
+    }
+
+    private static void ReplaceDirectory(string sourcePath, string destinationPath)
+    {
+        if (Directory.Exists(destinationPath))
+            Directory.Delete(destinationPath, recursive: true);
+        CopyDirectory(sourcePath, destinationPath);
+    }
+
     private static string? ResolveWorkspacePath(GatewayConfig config)
     {
         var workspace = config.Tooling.WorkspaceRoot;
@@ -456,14 +675,20 @@ internal static class UpgradeCommands
 
             Usage:
               openclaw upgrade check [--config <path>] [--offline]
+              openclaw upgrade rollback [--config <path>] [--offline] [--require-provider]
 
             Notes:
               - Runs preflight checks before an upgrade.
               - Combines setup verification, provider readiness, plugin compatibility,
                 skill compatibility, and migration-risk heuristics into one report.
+              - Captures a last-known-good config/env/deploy snapshot when preflight succeeds.
+              - 'rollback' restores the saved snapshot and reruns setup verification.
               - Returns a non-zero exit code when blocking issues are found.
             """);
     }
+
+    private static string GetCurrentVersion()
+        => typeof(UpgradeCommands).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
     private sealed record UpgradeCheckSummary(
         string Label,
@@ -471,4 +696,12 @@ internal static class UpgradeCommands
         string Summary,
         IReadOnlyList<string> Details,
         IReadOnlyList<string> NextActions);
+
+    private sealed record RollbackCaptureItem(
+        string Kind,
+        string SourcePath,
+        string TargetPath,
+        bool IsDirectory,
+        bool Exists,
+        string? SnapshotRelativePath);
 }

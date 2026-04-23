@@ -21,6 +21,7 @@ public sealed class DocsConsistencyTests
         Assert.Contains("openclaw skills inspect", readme, StringComparison.Ordinal);
         Assert.Contains("/admin/skills", readme, StringComparison.Ordinal);
         Assert.Contains("openclaw compatibility catalog", readme, StringComparison.Ordinal);
+        Assert.Contains("openclaw upgrade rollback", readme, StringComparison.Ordinal);
         Assert.Contains("openclaw migrate upstream", readme, StringComparison.Ordinal);
         Assert.Contains("/admin/observability/summary", readme, StringComparison.Ordinal);
         Assert.Contains("/admin/audit/export", readme, StringComparison.Ordinal);
@@ -35,6 +36,7 @@ public sealed class DocsConsistencyTests
         Assert.Contains("--doctor", quickstart, StringComparison.Ordinal);
         Assert.Contains("openclaw admin posture", quickstart, StringComparison.Ordinal);
         Assert.Contains("COMPATIBILITY.md", quickstart, StringComparison.Ordinal);
+        Assert.Contains("openclaw upgrade rollback", quickstart, StringComparison.Ordinal);
         Assert.Contains("openclaw migrate upstream", quickstart, StringComparison.Ordinal);
         Assert.Contains("Breaking change", quickstart, StringComparison.Ordinal);
         Assert.Contains("operator account tokens", quickstart, StringComparison.Ordinal);
@@ -48,6 +50,7 @@ public sealed class DocsConsistencyTests
         Assert.Contains("openclaw skills inspect", userGuide, StringComparison.Ordinal);
         Assert.Contains("/admin/plugins/{id}/review", userGuide, StringComparison.Ordinal);
         Assert.Contains("openclaw compatibility catalog", userGuide, StringComparison.Ordinal);
+        Assert.Contains("openclaw upgrade rollback", userGuide, StringComparison.Ordinal);
         Assert.Contains("/admin/compatibility/catalog", userGuide, StringComparison.Ordinal);
         Assert.Contains("/admin/observability/summary", userGuide, StringComparison.Ordinal);
         Assert.Contains("/admin/audit/export", userGuide, StringComparison.Ordinal);

@@ -262,6 +262,29 @@ public sealed class SetupVerificationSnapshot
     public required SetupVerificationResponse Verification { get; init; }
 }
 
+public sealed class UpgradeRollbackSnapshotArtifact
+{
+    public required string Kind { get; init; }
+    public required string TargetPath { get; init; }
+    public bool Exists { get; init; }
+    public bool IsDirectory { get; init; }
+    public string? SnapshotRelativePath { get; init; }
+}
+
+public sealed class UpgradeRollbackSnapshot
+{
+    public int SchemaVersion { get; init; } = 1;
+    public string SnapshotId { get; init; } = Guid.NewGuid().ToString("n");
+    public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
+    public string CreatedByVersion { get; init; } = "";
+    public string ConfigPath { get; init; } = "";
+    public string? WorkspacePath { get; init; }
+    public string VerificationStatus { get; init; } = SetupCheckStates.Pass;
+    public bool Offline { get; init; }
+    public bool RequireProvider { get; init; }
+    public IReadOnlyList<UpgradeRollbackSnapshotArtifact> Artifacts { get; init; } = [];
+}
+
 public sealed class DoctorCheckItem
 {
     public required string Id { get; init; }

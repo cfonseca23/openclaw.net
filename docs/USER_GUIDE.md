@@ -28,6 +28,7 @@ openclaw setup launch --config ~/.openclaw/config/openclaw.settings.json
 openclaw setup service --config ~/.openclaw/config/openclaw.settings.json --platform all
 openclaw setup status --config ~/.openclaw/config/openclaw.settings.json
 openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json
+openclaw upgrade rollback --config ~/.openclaw/config/openclaw.settings.json --offline
 ```
 
 If you start the gateway directly from a local terminal instead of using `setup launch`, the direct fallback is:

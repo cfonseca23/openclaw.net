@@ -4,6 +4,7 @@ public static class GatewaySetupPaths
 {
     public const string DefaultConfigPath = "~/.openclaw/config/openclaw.settings.json";
     public const string DefaultLocalStartupStatePath = "~/.openclaw/state/local-startup.json";
+    public const string DefaultUpgradeSnapshotRootPath = "~/.openclaw/state/upgrade-snapshots";
 
     public static string ExpandPath(string path)
     {
@@ -24,4 +25,7 @@ public static class GatewaySetupPaths
 
     public static string ResolveDefaultLocalStartupStatePath()
         => Path.GetFullPath(ExpandPath(DefaultLocalStartupStatePath));
+
+    public static string ResolveDefaultUpgradeSnapshotRootPath()
+        => Path.GetFullPath(ExpandPath(DefaultUpgradeSnapshotRootPath));
 }

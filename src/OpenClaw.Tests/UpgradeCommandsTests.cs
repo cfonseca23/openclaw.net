@@ -1,5 +1,7 @@
 using OpenClaw.Cli;
 using OpenClaw.Core.Models;
+using GatewaySetupArtifacts = OpenClaw.Core.Setup.GatewaySetupArtifacts;
+using UpgradeRollbackSnapshotStore = OpenClaw.Core.Setup.UpgradeRollbackSnapshotStore;
 using Xunit;
 
 namespace OpenClaw.Tests;
@@ -26,7 +28,12 @@ public sealed class UpgradeCommandsTests
             Assert.Contains("[pass] Plugin compatibility", text, StringComparison.Ordinal);
             Assert.Contains("[pass] Skill compatibility", text, StringComparison.Ordinal);
             Assert.Contains("[pass] Migration impact", text, StringComparison.Ordinal);
+            Assert.Contains("[pass] Rollback snapshot", text, StringComparison.Ordinal);
             Assert.Contains("Provider smoke was skipped because offline mode is enabled.", text, StringComparison.Ordinal);
+
+            var snapshot = new UpgradeRollbackSnapshotStore(configPath).Load();
+            Assert.NotNull(snapshot);
+            Assert.Equal(configPath, snapshot!.ConfigPath);
         });
     }
 
@@ -64,6 +71,7 @@ public sealed class UpgradeCommandsTests
             Assert.Contains("[fail] Plugin compatibility", text, StringComparison.Ordinal);
             Assert.Contains("unsupported_schema_keyword", text, StringComparison.Ordinal);
             Assert.Contains("Upgrade preflight failed.", text, StringComparison.Ordinal);
+            Assert.Null(new UpgradeRollbackSnapshotStore(configPath).Load());
         });
     }
 
@@ -94,6 +102,70 @@ public sealed class UpgradeCommandsTests
     }
 
     [Fact]
+    public async Task RunAsync_Rollback_RestoresSavedConfigAndArtifacts()
+    {
+        await WithIsolatedHomeAsync(async root =>
+        {
+            var (configPath, _) = await CreateBaseConfigAsync(root);
+            var envExamplePath = GatewaySetupArtifacts.BuildEnvExamplePath(configPath);
+            var deployDirectory = SetupLifecycleCommand.GetDeployDirectory(configPath);
+            Directory.CreateDirectory(deployDirectory);
+            var deployFile = Path.Combine(deployDirectory, "run-gateway.sh");
+            await File.WriteAllTextAsync(deployFile, "#!/usr/bin/env bash\necho original\n");
+
+            using (var output = new StringWriter())
+            using (var error = new StringWriter())
+            {
+                var checkExitCode = await UpgradeCommands.RunAsync(["check", "--config", configPath, "--offline"], output, error, root);
+                Assert.Equal(0, checkExitCode);
+                Assert.Equal(string.Empty, error.ToString());
+            }
+
+            var originalConfigText = await File.ReadAllTextAsync(configPath);
+            var originalEnvText = await File.ReadAllTextAsync(envExamplePath);
+            var originalDeployText = await File.ReadAllTextAsync(deployFile);
+
+            var config = GatewayConfigFile.Load(configPath);
+            config.BindAddress = "0.0.0.0";
+            config.Port = 19999;
+            await GatewayConfigFile.SaveAsync(config, configPath);
+            await File.WriteAllTextAsync(envExamplePath, "BROKEN=1\n");
+            await File.WriteAllTextAsync(deployFile, "#!/usr/bin/env bash\necho broken\n");
+
+            using var rollbackOutput = new StringWriter();
+            using var rollbackError = new StringWriter();
+            var rollbackExitCode = await UpgradeCommands.RunAsync(["rollback", "--config", configPath, "--offline"], rollbackOutput, rollbackError, root);
+
+            Assert.Equal(0, rollbackExitCode);
+            Assert.Equal(string.Empty, rollbackError.ToString());
+            Assert.Equal(originalConfigText, await File.ReadAllTextAsync(configPath));
+            Assert.Equal(originalEnvText, await File.ReadAllTextAsync(envExamplePath));
+            Assert.Equal(originalDeployText, await File.ReadAllTextAsync(deployFile));
+            var text = rollbackOutput.ToString();
+            Assert.Contains("Restored last-known-good setup snapshot.", text, StringComparison.Ordinal);
+            Assert.Contains("Rollback completed successfully.", text, StringComparison.Ordinal);
+            Assert.Contains("Verification result: pass", text, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public async Task RunAsync_Rollback_WithoutSnapshot_Fails()
+    {
+        await WithIsolatedHomeAsync(async root =>
+        {
+            var (configPath, _) = await CreateBaseConfigAsync(root);
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+
+            var exitCode = await UpgradeCommands.RunAsync(["rollback", "--config", configPath, "--offline"], output, error, root);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, output.ToString());
+            Assert.Contains("No rollback snapshot was found", error.ToString(), StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public async Task RunAsync_Help_PrintsUsage()
     {
         using var output = new StringWriter();
@@ -104,6 +176,7 @@ public sealed class UpgradeCommandsTests
         Assert.Equal(0, exitCode);
         Assert.Equal(string.Empty, error.ToString());
         Assert.Contains("openclaw upgrade", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("rollback", output.ToString(), StringComparison.Ordinal);
     }
 
     private static async Task<(string ConfigPath, string Workspace)> CreateBaseConfigAsync(string root)
