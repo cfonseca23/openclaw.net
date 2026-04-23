@@ -21,17 +21,26 @@ internal static class SetupCommand
         TextWriter error,
         string currentDirectory,
         bool canPrompt)
+        => (await RunWithResultAsync(args, input, output, error, currentDirectory, canPrompt)).ExitCode;
+
+    internal static async Task<SetupCommandResult> RunWithResultAsync(
+        string[] args,
+        TextReader input,
+        TextWriter output,
+        TextWriter error,
+        string currentDirectory,
+        bool canPrompt)
     {
         if (args.Length > 0 && string.Equals(args[0], "launch", StringComparison.OrdinalIgnoreCase))
-            return await SetupLifecycleCommand.RunLaunchAsync(args[1..], output, error, currentDirectory);
+            return new SetupCommandResult { ExitCode = await SetupLifecycleCommand.RunLaunchAsync(args[1..], output, error, currentDirectory) };
         if (args.Length > 0 && string.Equals(args[0], "service", StringComparison.OrdinalIgnoreCase))
-            return await SetupLifecycleCommand.RunServiceAsync(args[1..], output, error, currentDirectory);
+            return new SetupCommandResult { ExitCode = await SetupLifecycleCommand.RunServiceAsync(args[1..], output, error, currentDirectory) };
         if (args.Length > 0 && string.Equals(args[0], "status", StringComparison.OrdinalIgnoreCase))
-            return SetupLifecycleCommand.RunStatus(args[1..], output, error);
+            return new SetupCommandResult { ExitCode = SetupLifecycleCommand.RunStatus(args[1..], output, error) };
         if (args.Length > 0 && string.Equals(args[0], "verify", StringComparison.OrdinalIgnoreCase))
-            return await SetupLifecycleCommand.RunVerifyAsync(args[1..], output, error);
+            return new SetupCommandResult { ExitCode = await SetupLifecycleCommand.RunVerifyAsync(args[1..], output, error) };
         if (args.Length > 0 && string.Equals(args[0], "channel", StringComparison.OrdinalIgnoreCase))
-            return await ChannelSetupCommand.RunAsync(args[1..], input, output, error, canPrompt);
+            return new SetupCommandResult { ExitCode = await ChannelSetupCommand.RunAsync(args[1..], input, output, error, canPrompt) };
 
         var parsed = CliArgs.Parse(args);
         var nonInteractive = parsed.HasFlag("--non-interactive");
@@ -40,7 +49,7 @@ internal static class SetupCommand
         if (requiresPrompt && !nonInteractive && !canPrompt)
         {
             error.WriteLine("Missing setup inputs and no interactive terminal is available. Re-run with --non-interactive and explicit values, or run 'openclaw setup' from a terminal.");
-            return 2;
+            return new SetupCommandResult { ExitCode = 2 };
         }
 
         SetupAnswers answers;
@@ -53,7 +62,7 @@ internal static class SetupCommand
         catch (ArgumentException ex)
         {
             error.WriteLine(ex.Message);
-            return 2;
+            return new SetupCommandResult { ExitCode = 2 };
         }
 
         var warnings = new List<string>();
@@ -64,7 +73,7 @@ internal static class SetupCommand
             error.WriteLine("Config validation failed:");
             foreach (var validationError in validationErrors)
                 error.WriteLine($"- {validationError}");
-            return 1;
+            return new SetupCommandResult { ExitCode = 1 };
         }
 
         Directory.CreateDirectory(answers.Workspace);
@@ -113,7 +122,11 @@ internal static class SetupCommand
         {
             output.WriteLine("Companion/public launch guidance: set OPENCLAW_BASE_URL and OPENCLAW_AUTH_TOKEN from the generated config or env file before starting the Companion app.");
         }
-        return 0;
+        return new SetupCommandResult
+        {
+            ExitCode = 0,
+            ConfigPath = answers.ConfigPath
+        };
     }
 
     private static bool RequiresPrompt(CliArgs parsed)
@@ -410,4 +423,11 @@ internal static class SetupCommand
         public string? SshUser { get; init; }
         public string? SshKey { get; init; }
     }
+}
+
+internal sealed class SetupCommandResult
+{
+    public int ExitCode { get; init; }
+
+    public string? ConfigPath { get; init; }
 }

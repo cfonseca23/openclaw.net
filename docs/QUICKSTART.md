@@ -10,28 +10,22 @@ Follow this path end-to-end before branching into anything else. Ignore every "o
 
 **1. Install prerequisites.** .NET 10 SDK and Git. Nothing else is required for the first run.
 
-**2. Set a provider key and run setup.**
+**2. Set a provider key and run the primary start path.**
 
 ```bash
 export MODEL_PROVIDER_KEY="sk-..."
-dotnet run --project src/OpenClaw.Cli -c Release -- setup
+dotnet run --project src/OpenClaw.Cli -c Release -- start
 ```
 
-Accept the defaults. This writes `~/.openclaw/config/openclaw.settings.json`.
+Accept the defaults. If the config does not exist yet, `openclaw start` runs setup first, writes `~/.openclaw/config/openclaw.settings.json`, and then launches.
 
-**3. Launch the gateway.**
-
-```bash
-dotnet run --project src/OpenClaw.Cli -c Release -- setup launch --config ~/.openclaw/config/openclaw.settings.json
-```
+**3. Open the browser UI.**
 
 **Expected:** startup phase lines (`Loading configuration`, `Building services`, `Initializing runtime`, `Starting listener`) followed by an `OpenClaw gateway ready.` block listing the working URLs. If you see `Started with notices:`, the gateway is still up; those are non-fatal startup advisories. If you do not see the ready block, the gateway is not ready yet.
 
-**4. Open the browser UI.**
-
 Go to `http://127.0.0.1:18789/chat` (not `/`, not the root URL). You should see the chat interface. Send a message; you should get a reply.
 
-**5. If anything is wrong, run the doctor.**
+**4. If anything is wrong, run the doctor.**
 
 ```bash
 dotnet run --project src/OpenClaw.Gateway -c Release -- --config ~/.openclaw/config/openclaw.settings.json --doctor
@@ -70,6 +64,7 @@ For a first run from source, prefer the generated external config from `openclaw
 
 | Command | Use when |
 | --- | --- |
+| `openclaw start` | You want the one-command local path that uses an existing config if present or runs setup first and then launches. |
 | `openclaw setup` | You want the guided onboarding flow that writes config, prints launch commands, and gives you `--doctor` plus `admin posture` follow-ups. |
 | `dotnet run --project src/OpenClaw.Gateway -c Release -- --quickstart` | You want to start the gateway directly from a repo checkout and let the gateway recover into a safe local profile instead of preparing config first. |
 | `openclaw init` | You want raw bootstrap files to edit manually before running the gateway. |
@@ -82,14 +77,15 @@ For a first run from source, prefer the generated external config from `openclaw
 1. Run the guided setup flow:
 
 ```bash
-openclaw setup
+openclaw start
 ```
 
-2. Accept the local defaults or supply your preferred provider, model, API key reference, workspace path, and optional execution backend.
+2. Accept the local defaults or supply your preferred provider, model, API key reference, workspace path, and optional execution backend. If a config already exists, `openclaw start` skips setup and launches directly.
 
-3. Start the supported local launch runner for that config:
+3. If you want the explicit split flow instead of the one-command path, use:
 
 ```bash
+openclaw setup
 openclaw setup launch --config ~/.openclaw/config/openclaw.settings.json
 ```
 
@@ -109,6 +105,10 @@ dotnet run --project src/OpenClaw.Gateway -c Release -- --config ~/.openclaw/con
 
 ```bash
 OPENCLAW_BASE_URL=http://127.0.0.1:18789 OPENCLAW_AUTH_TOKEN=... openclaw admin posture
+```
+
+```bash
+openclaw upgrade check --config ~/.openclaw/config/openclaw.settings.json
 ```
 
 Default local endpoints:
