@@ -6,6 +6,7 @@ using System.Text.Json.Serialization.Metadata;
 using System.Globalization;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenClaw.Agent;
+using OpenClaw.Agent.Execution;
 using OpenClaw.Agent.Plugins;
 using OpenClaw.Channels;
 using OpenClaw.Core.Abstractions;
@@ -665,7 +666,7 @@ internal static class AdminEndpoints
             if (request is null || string.IsNullOrWhiteSpace(request.ToolName))
                 return Results.BadRequest(new MutationResponse { Success = false, Error = "toolName is required." });
 
-            var response = await SimulateApprovalAsync(startup, runtime, request, ctx.RequestAborted);
+            var response = await SimulateApprovalAsync(startup, runtime, request, ctx.RequestServices, ctx.RequestAborted);
             return Results.Json(response, CoreJsonContext.Default.ApprovalSimulationResponse);
         });
 
@@ -738,6 +739,9 @@ internal static class AdminEndpoints
                     Id = session.Id,
                     ChannelId = session.ChannelId,
                     SenderId = session.SenderId,
+                    StableSessionId = session.StableSessionBinding?.ExternalSessionId,
+                    StableSessionNamespace = session.StableSessionBinding?.Namespace,
+                    StableSessionOwnerKey = session.StableSessionBinding?.OwnerKey,
                     CreatedAt = session.CreatedAt,
                     LastActiveAt = session.LastActiveAt,
                     State = session.State,
@@ -2648,6 +2652,17 @@ internal static class AdminEndpoints
                 CoreJsonContext.Default.IntegrationCompatibilityCatalogResponse);
         });
 
+        app.MapGet("/admin/compatibility/export", (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.compatibility");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            return Results.Json(
+                facade.GetCompatibilityExport(),
+                CoreJsonContext.Default.IntegrationCompatibilityExportResponse);
+        });
+
         app.MapGet("/admin/plugins/{id}", (HttpContext ctx, string id) =>
         {
             var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.plugins");
@@ -3258,37 +3273,7 @@ internal static class AdminEndpoints
         RuntimeOperationsState operations,
         bool requireCsrf,
         string endpointScope)
-    {
-        var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf);
-        if (!auth.IsAuthorized)
-            return (null, Results.Unauthorized());
-
-        if (!EndpointHelpers.IsRoleAllowed(auth.Role, endpointScope, out var requiredRole))
-        {
-            return (null, Results.Json(
-                new OperationStatusResponse
-                {
-                    Success = false,
-                    Error = $"Endpoint '{endpointScope}' requires role '{requiredRole}'."
-                },
-                CoreJsonContext.Default.OperationStatusResponse,
-                statusCode: StatusCodes.Status403Forbidden));
-        }
-
-        if (!EndpointHelpers.TryConsumeOperatorRateLimit(ctx, operations, auth, endpointScope, out var blockedByPolicyId))
-        {
-            return (null, Results.Json(
-                new OperationStatusResponse
-                {
-                    Success = false,
-                    Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'."
-                },
-                CoreJsonContext.Default.OperationStatusResponse,
-                statusCode: StatusCodes.Status429TooManyRequests));
-        }
-
-        return (auth, null);
-    }
+        => EndpointHelpers.AuthorizeOperatorEndpoint(ctx, startup, browserSessions, operations, requireCsrf, endpointScope);
 
     private static void RecordOperatorAudit(
         HttpContext ctx,
@@ -4577,6 +4562,7 @@ internal static class AdminEndpoints
         GatewayStartupContext startup,
         GatewayAppRuntime runtime,
         ApprovalSimulationRequest request,
+        IServiceProvider services,
         CancellationToken ct)
     {
         var effectiveTooling = CloneToolingConfig(startup.Config.Tooling, request.AutonomyMode);
@@ -4590,6 +4576,8 @@ internal static class AdminEndpoints
             .Select(NormalizeApprovalToolName)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var execution = ExplainExecutionRoute(startup.Config, normalizedToolName, services);
+        var approvalRequired = requireToolApproval && approvalRequiredTools.Contains(normalizedToolName, StringComparer.OrdinalIgnoreCase);
 
         var autonomyHook = new AutonomyHook(effectiveTooling, NullLogger.Instance);
         var allowed = await autonomyHook.BeforeExecuteAsync(normalizedToolName, argumentsJson, ct);
@@ -4601,12 +4589,20 @@ internal static class AdminEndpoints
                 Reason = "Autonomy or path policy would deny this tool execution.",
                 ToolName = request.ToolName!,
                 AutonomyMode = (effectiveTooling.AutonomyMode ?? "full").Trim().ToLowerInvariant(),
+                AutonomyAllowed = false,
                 RequireToolApproval = requireToolApproval,
+                ApprovalRequired = approvalRequired,
+                BlockingPolicy = "autonomy",
+                ExecutionBackend = execution?.BackendName,
+                ExecutionFallbackBackend = execution?.FallbackBackend,
+                ExecutionTemplate = execution?.Template,
+                ExecutionSandboxMode = execution is null ? null : execution.SandboxMode.ToString().ToLowerInvariant(),
+                ExecutionRequireWorkspace = execution?.RequireWorkspace,
                 ApprovalRequiredTools = approvalRequiredTools
             };
         }
 
-        if (requireToolApproval && approvalRequiredTools.Contains(normalizedToolName, StringComparer.OrdinalIgnoreCase))
+        if (approvalRequired)
         {
             return new ApprovalSimulationResponse
             {
@@ -4614,7 +4610,15 @@ internal static class AdminEndpoints
                 Reason = "The effective approval policy requires approval for this tool.",
                 ToolName = request.ToolName!,
                 AutonomyMode = (effectiveTooling.AutonomyMode ?? "full").Trim().ToLowerInvariant(),
+                AutonomyAllowed = true,
                 RequireToolApproval = requireToolApproval,
+                ApprovalRequired = true,
+                BlockingPolicy = "approval",
+                ExecutionBackend = execution?.BackendName,
+                ExecutionFallbackBackend = execution?.FallbackBackend,
+                ExecutionTemplate = execution?.Template,
+                ExecutionSandboxMode = execution is null ? null : execution.SandboxMode.ToString().ToLowerInvariant(),
+                ExecutionRequireWorkspace = execution?.RequireWorkspace,
                 ApprovalRequiredTools = approvalRequiredTools
             };
         }
@@ -4625,9 +4629,73 @@ internal static class AdminEndpoints
             Reason = "The tool passes autonomy checks and is not currently approval-gated.",
             ToolName = request.ToolName!,
             AutonomyMode = (effectiveTooling.AutonomyMode ?? "full").Trim().ToLowerInvariant(),
+            AutonomyAllowed = true,
             RequireToolApproval = requireToolApproval,
+            ApprovalRequired = false,
+            BlockingPolicy = null,
+            ExecutionBackend = execution?.BackendName,
+            ExecutionFallbackBackend = execution?.FallbackBackend,
+            ExecutionTemplate = execution?.Template,
+            ExecutionSandboxMode = execution is null ? null : execution.SandboxMode.ToString().ToLowerInvariant(),
+            ExecutionRequireWorkspace = execution?.RequireWorkspace,
             ApprovalRequiredTools = approvalRequiredTools
         };
+    }
+
+    private static ToolExecutionRouter.ExecutionRouteResolution? ExplainExecutionRoute(
+        GatewayConfig config,
+        string normalizedToolName,
+        IServiceProvider services)
+    {
+        var router = services.GetService<ToolExecutionRouter>()
+            ?? new ToolExecutionRouter(
+                config,
+                services.GetService<IToolSandbox>(),
+                services.GetService<ILoggerFactory>()?.CreateLogger<ToolExecutionRouter>());
+
+        return normalizedToolName switch
+        {
+            "process" => router.ResolveBackendForProcess(),
+            "shell" => ResolveShellExecutionRoute(config),
+            _ => null
+        };
+    }
+
+    private static ToolExecutionRouter.ExecutionRouteResolution ResolveShellExecutionRoute(GatewayConfig config)
+    {
+        if (config.Execution.Enabled &&
+            config.Execution.Tools.TryGetValue("shell", out var shellRoute) &&
+            !string.IsNullOrWhiteSpace(shellRoute.Backend))
+        {
+            return new ToolExecutionRouter.ExecutionRouteResolution(
+                shellRoute.Backend,
+                shellRoute.FallbackBackend,
+                config.Execution.Profiles.TryGetValue(shellRoute.Backend, out var shellProfile) ? shellProfile.Image : null,
+                shellRoute.RequireWorkspace,
+                ToolSandboxMode.None);
+        }
+
+        var sandboxMode = ToolSandboxPolicy.ResolveMode(config, "shell", ToolSandboxMode.Prefer);
+        if (sandboxMode != ToolSandboxMode.None && ToolSandboxPolicy.IsOpenSandboxProviderConfigured(config))
+        {
+            return new ToolExecutionRouter.ExecutionRouteResolution(
+                "opensandbox",
+                null,
+                ToolSandboxPolicy.ResolveTemplate(config, "shell"),
+                RequireWorkspace: false,
+                sandboxMode);
+        }
+
+        var backendName = config.Execution.DefaultBackend;
+        var requireWorkspace = config.Execution.Profiles.TryGetValue(backendName, out var profile) &&
+            (profile.Type.Equals(ExecutionBackendType.Docker, StringComparison.OrdinalIgnoreCase) ||
+             profile.Type.Equals(ExecutionBackendType.Ssh, StringComparison.OrdinalIgnoreCase));
+        return new ToolExecutionRouter.ExecutionRouteResolution(
+            backendName,
+            null,
+            config.Execution.Profiles.TryGetValue(backendName, out profile) ? profile.Image : null,
+            requireWorkspace,
+            sandboxMode);
     }
 
     private static ToolingConfig CloneToolingConfig(ToolingConfig source, string? autonomyModeOverride)

@@ -103,6 +103,9 @@ public sealed class PluginsConfig
     /// <summary>Transport configuration for the plugin bridge.</summary>
     public BridgeTransportConfig Transport { get; set; } = new();
 
+    /// <summary>Optional bridge runtime budgets that auto-quarantine unhealthy plugins.</summary>
+    public PluginBridgeBudgetConfig RuntimeBudget { get; set; } = new();
+
     /// <summary>Configuration for native plugin replicas.</summary>
     public NativePluginsConfig Native { get; set; } = new();
 
@@ -111,6 +114,18 @@ public sealed class PluginsConfig
 
     /// <summary>Configuration for in-process dynamic .NET plugins. JIT mode only.</summary>
     public NativeDynamicPluginsConfig DynamicNative { get; set; } = new();
+}
+
+public sealed class PluginBridgeBudgetConfig
+{
+    /// <summary>Maximum restart count allowed before a bridge plugin is auto-quarantined. 0 disables the threshold.</summary>
+    public int MaxRestartCount { get; set; }
+
+    /// <summary>Maximum working set size in bytes allowed before a bridge plugin is auto-quarantined. 0 disables the threshold.</summary>
+    public long MaxWorkingSetBytes { get; set; }
+
+    /// <summary>Maximum compatibility error count allowed before a bridge plugin is auto-quarantined. 0 disables the threshold.</summary>
+    public int MaxCompatibilityErrors { get; set; }
 }
 
 public sealed class McpPluginsConfig

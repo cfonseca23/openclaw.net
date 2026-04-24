@@ -41,6 +41,7 @@ OpenClaw.NET keeps plugin compatibility explicit by runtime mode. The goal is to
 | `openclaw plugins install --dry-run` trust inspection | Supported | Prints trust level, declared surface, diagnostics, and blocks install when compatibility errors are present. |
 | Plugin config validation | Supported with caveats | Validated against the documented JSON Schema subset below before startup. |
 | Plugin diagnostics in `/doctor` | Supported | Discovery, load, config, and compatibility failures are reported explicitly. |
+| Plugin bridge runtime budgets | Supported | `OpenClaw:Plugins:RuntimeBudget` can auto-quarantine bridge plugins by restart count, working set, and compatibility error thresholds. |
 | `Plugins:Transport:Mode=stdio` | Supported | JSON-RPC over child process stdin/stdout. |
 | `Plugins:Transport:Mode=socket` | Supported | Local IPC with authenticated handshake and private runtime socket directories. |
 | `Plugins:Transport:Mode=hybrid` | Supported | `init` over stdio, then runtime RPC/notifications over the local IPC socket transport. |
@@ -111,9 +112,14 @@ Unsupported schema keywords are rejected with `unsupported_schema_keyword`.
 
 - Plugin install candidates are classified as `first-party`, `upstream-compatible`, or `untrusted` at install time.
 - Operators can promote a loaded plugin to `third-party-reviewed` from the admin UI or `POST /admin/plugins/{id}/review`.
-- `GET /admin/plugins` exposes trust level, compatibility status, declared surface, diagnostics counts, review notes, and source paths.
+- `GET /admin/plugins` exposes trust level, compatibility status, declared surface, diagnostics counts, runtime restart/memory data, budget violations, review notes, and source paths.
 - `GET /admin/skills` exposes the loaded skill inventory with trust level, host requirements, dispatch metadata, and source location.
 - Local `SKILL.md` folders or `.tgz` bundles can be inspected and installed with `openclaw skills inspect` and `openclaw skills install`.
+
+## Public-bind and CI surfaces
+
+- `OpenClaw:Security:StrictPublicBindProfile=true` applies the hardened Internet-facing preset over approvals, raw secret refs, plugin bridge exposure, and unsafe local tool execution.
+- `GET /api/integration/compatibility/export` and `GET /admin/compatibility/export` emit the machine-readable compatibility snapshot used by CI and deployment validation.
 
 ## Tested Catalog
 

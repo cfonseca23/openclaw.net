@@ -336,6 +336,7 @@ When a tool requires approval, the gateway emits a `tool_approval_required` even
 - Read-only simulator:
   - `POST /admin/approvals/simulate`
   - `openclaw admin approvals simulate`
+  - The simulator now explains the effective execution backend, sandbox mode, workspace requirement, approval verdict, and the first blocking policy (`autonomy` vs `approval`) without mutating the live queue.
 
 ### Strict Allowlists + Onboarding Helpers
 To make allowlists consistent across channels, set:

@@ -2,6 +2,7 @@ using OpenClaw.Core.Models;
 using OpenClaw.Core.Security;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Composition;
+using OpenClaw.Gateway.Extensions;
 
 namespace OpenClaw.Gateway;
 
@@ -18,6 +19,8 @@ internal static class SecurityPostureBuilder
         var browserSessionCookieSecureEffective = !publicBind || config.Security.TrustForwardedHeaders;
         var sandboxConfigured = ToolSandboxPolicy.IsOpenSandboxProviderConfigured(config);
         var browserAvailability = BrowserToolSupport.Evaluate(config, startup.RuntimeState);
+        var processToolSafeForPublicBind = !publicBind || !GatewaySecurityExtensions.IsUnsafeLocalToolExecutionExposed(config, "process");
+        var signedWebhookValidationReady = !publicBind || HasSignedWebhookValidationReadiness(config);
         var riskFlags = new List<string>();
         var recommendations = new List<string>();
 
@@ -51,10 +54,46 @@ internal static class SecurityPostureBuilder
             recommendations.Add("Replace raw: secret refs with env: references before Internet-facing deployment.");
         }
 
-        if (publicBind && config.Tooling.AllowShell && !ToolSandboxPolicy.IsRequireSandboxed(config, "shell", ToolSandboxMode.Prefer))
+        if (publicBind && GatewaySecurityExtensions.IsUnsafeLocalToolExecutionExposed(config, "shell"))
         {
             riskFlags.Add("public_bind_unsandboxed_shell");
             recommendations.Add("Require sandboxing for shell on public binds or disable shell tooling entirely.");
+        }
+
+        if (publicBind && GatewaySecurityExtensions.IsUnsafeLocalToolExecutionExposed(config, "process"))
+        {
+            riskFlags.Add("public_bind_unsandboxed_process");
+            recommendations.Add("Route process to an isolated backend or disable background process tooling on public binds.");
+        }
+
+        if (publicBind && config.Channels.Sms.Twilio.Enabled && !config.Channels.Sms.Twilio.ValidateSignature)
+        {
+            riskFlags.Add("public_bind_unsigned_sms_webhooks");
+            recommendations.Add("Enable Twilio SMS signature validation before exposing a public bind.");
+        }
+
+        if (publicBind && config.Channels.Telegram.Enabled && !config.Channels.Telegram.ValidateSignature)
+        {
+            riskFlags.Add("public_bind_unsigned_telegram_webhooks");
+            recommendations.Add("Enable Telegram webhook secret validation before exposing a public bind.");
+        }
+
+        if (publicBind && config.Channels.Teams.Enabled && !config.Channels.Teams.ValidateToken)
+        {
+            riskFlags.Add("public_bind_unsigned_teams_webhooks");
+            recommendations.Add("Enable Teams JWT validation before exposing a public bind.");
+        }
+
+        if (publicBind && config.Channels.Slack.Enabled && !config.Channels.Slack.ValidateSignature)
+        {
+            riskFlags.Add("public_bind_unsigned_slack_webhooks");
+            recommendations.Add("Enable Slack signature validation before exposing a public bind.");
+        }
+
+        if (publicBind && config.Channels.Discord.Enabled && !config.Channels.Discord.ValidateSignature)
+        {
+            riskFlags.Add("public_bind_unsigned_discord_webhooks");
+            recommendations.Add("Enable Discord interaction signature validation before exposing a public bind.");
         }
 
         if (browserAvailability.ConfiguredEnabled && !browserAvailability.Registered)
@@ -89,11 +128,24 @@ internal static class SecurityPostureBuilder
             PluginBridgeEnabled = pluginBridgeEnabled,
             PluginBridgeTransportMode = transportMode,
             PluginBridgeSecurityMode = securityMode,
+            ProcessToolSafeForPublicBind = processToolSafeForPublicBind,
+            StableSessionsScopedByRequester = true,
+            SignedWebhookValidationReady = signedWebhookValidationReady,
             SandboxConfigured = sandboxConfigured,
             AllowsRawSecretRefsOnPublicBind = config.Security.AllowRawSecretRefsOnPublicBind,
             RiskFlags = riskFlags,
             Recommendations = recommendations
         };
+    }
+
+    private static bool HasSignedWebhookValidationReadiness(GatewayConfig config)
+    {
+        return (!config.Channels.Sms.Twilio.Enabled || config.Channels.Sms.Twilio.ValidateSignature)
+            && (!config.Channels.Telegram.Enabled || config.Channels.Telegram.ValidateSignature)
+            && (!config.Channels.WhatsApp.Enabled || !string.Equals(config.Channels.WhatsApp.Type, "official", StringComparison.OrdinalIgnoreCase) || config.Channels.WhatsApp.ValidateSignature)
+            && (!config.Channels.Teams.Enabled || config.Channels.Teams.ValidateToken)
+            && (!config.Channels.Slack.Enabled || config.Channels.Slack.ValidateSignature)
+            && (!config.Channels.Discord.Enabled || config.Channels.Discord.ValidateSignature);
     }
 
     private static bool HasRawSecretRefs(GatewayConfig config)

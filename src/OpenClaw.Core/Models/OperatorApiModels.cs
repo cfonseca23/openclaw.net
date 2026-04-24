@@ -121,6 +121,7 @@ public sealed class PluginOperatorState
     public required string PluginId { get; init; }
     public bool Disabled { get; init; }
     public bool Quarantined { get; init; }
+    public string? QuarantineSource { get; init; }
     public bool Reviewed { get; init; }
     public string? Reason { get; init; }
     public string? ReviewNotes { get; init; }
@@ -135,6 +136,7 @@ public sealed class PluginHealthSnapshot
     public bool BlockedByRuntimeMode { get; init; }
     public bool Disabled { get; init; }
     public bool Quarantined { get; init; }
+    public string? QuarantineSource { get; init; }
     public bool Reviewed { get; init; }
     public string? PendingReason { get; init; }
     public string? ReviewNotes { get; init; }
@@ -152,10 +154,13 @@ public sealed class PluginHealthSnapshot
     public string? LastError { get; init; }
     public DateTimeOffset? LastActivityAtUtc { get; init; }
     public int RestartCount { get; init; }
+    public long? WorkingSetBytes { get; init; }
+    public long? PrivateMemoryBytes { get; init; }
     public int ToolCount { get; init; }
     public int ChannelCount { get; init; }
     public int CommandCount { get; init; }
     public int ProviderCount { get; init; }
+    public IReadOnlyList<string> BudgetViolations { get; init; } = [];
     public IReadOnlyList<PluginCompatibilityDiagnostic> Diagnostics { get; init; } = [];
 }
 
@@ -651,6 +656,9 @@ public sealed class SecurityPostureResponse
     public bool PluginBridgeEnabled { get; init; }
     public string PluginBridgeTransportMode { get; init; } = "stdio";
     public string PluginBridgeSecurityMode { get; init; } = "legacy";
+    public bool ProcessToolSafeForPublicBind { get; init; }
+    public bool StableSessionsScopedByRequester { get; init; }
+    public bool SignedWebhookValidationReady { get; init; }
     public bool SandboxConfigured { get; init; }
     public bool AllowsRawSecretRefsOnPublicBind { get; init; }
     public IReadOnlyList<string> RiskFlags { get; init; } = [];
@@ -675,7 +683,15 @@ public sealed class ApprovalSimulationResponse
     public required string Reason { get; init; }
     public string ToolName { get; init; } = "";
     public string AutonomyMode { get; init; } = "full";
+    public bool AutonomyAllowed { get; init; }
     public bool RequireToolApproval { get; init; }
+    public bool ApprovalRequired { get; init; }
+    public string? BlockingPolicy { get; init; }
+    public string? ExecutionBackend { get; init; }
+    public string? ExecutionFallbackBackend { get; init; }
+    public string? ExecutionTemplate { get; init; }
+    public string? ExecutionSandboxMode { get; init; }
+    public bool? ExecutionRequireWorkspace { get; init; }
     public IReadOnlyList<string> ApprovalRequiredTools { get; init; } = [];
 }
 

@@ -480,6 +480,7 @@ Current integration API coverage includes:
 - status and dashboard snapshots
 - pending approvals and approval history
 - provider and plugin health snapshots
+- machine-readable compatibility export for CI (`GET /api/integration/compatibility/export`)
 - operator audit events
 - session lists, session detail, and session timelines
 - automation definitions, latest run state, per-run history, replay, and quarantine clearing
@@ -512,6 +513,14 @@ var status = await client.CallMcpToolAsync("openclaw.get_status", emptyArguments
 ```
 
 On non-loopback/public binds, authenticate these surfaces with `Authorization: Bearer <operator-account-token>` for normal automation, or the bootstrap token only for first-run recovery flows.
+
+### OpenAI-compatible stable sessions
+
+`X-OpenClaw-Session-Id` remains the external header for stable OpenAI-compatible conversations, but the gateway now scopes the internal session key by requester identity.
+
+- The same stable session id can be reused safely by different callers without sharing history.
+- Admin session listings and session detail now expose `stableSessionId`, `stableSessionNamespace`, and `stableSessionOwnerKey` so operators can audit the binding.
+- Unsafe stable session ids (path separators, traversal patterns, overlong ids) are rejected at the HTTP edge.
 
 ## Upstream Migration
 

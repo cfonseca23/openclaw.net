@@ -19,11 +19,10 @@ internal static class ControlEndpoints
 
         app.MapPost("/pairing/approve", (HttpContext ctx, string channelId, string senderId, string code) =>
         {
-            var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: true);
-            if (!auth.IsAuthorized)
-                return Results.Unauthorized();
-            if (!EndpointHelpers.TryConsumeOperatorRateLimit(ctx, operations, auth, "admin.control", out var blockedByPolicyId))
-                return Results.Json(new OperationStatusResponse { Success = false, Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'." }, CoreJsonContext.Default.OperationStatusResponse, statusCode: StatusCodes.Status429TooManyRequests);
+            var authResult = EndpointHelpers.AuthorizeOperatorEndpoint(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.control");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
 
             if (runtime.PairingManager.TryApprove(channelId, senderId, code, out var error))
             {
@@ -52,11 +51,10 @@ internal static class ControlEndpoints
 
         app.MapPost("/pairing/revoke", (HttpContext ctx, string channelId, string senderId) =>
         {
-            var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: true);
-            if (!auth.IsAuthorized)
-                return Results.Unauthorized();
-            if (!EndpointHelpers.TryConsumeOperatorRateLimit(ctx, operations, auth, "admin.control", out var blockedByPolicyId))
-                return Results.Json(new OperationStatusResponse { Success = false, Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'." }, CoreJsonContext.Default.OperationStatusResponse, statusCode: StatusCodes.Status429TooManyRequests);
+            var authResult = EndpointHelpers.AuthorizeOperatorEndpoint(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.control");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
 
             runtime.PairingManager.Revoke(channelId, senderId);
             AppendAudit(ctx, operations, auth, "pairing_revoke", $"{channelId}:{senderId}", "Revoked pairing.", true);
@@ -95,11 +93,10 @@ internal static class ControlEndpoints
 
         app.MapPost("/allowlists/{channelId}/add_latest", (HttpContext ctx, string channelId) =>
         {
-            var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: true);
-            if (!auth.IsAuthorized)
-                return Results.Unauthorized();
-            if (!EndpointHelpers.TryConsumeOperatorRateLimit(ctx, operations, auth, "admin.control", out var blockedByPolicyId))
-                return Results.Json(new OperationStatusResponse { Success = false, Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'." }, CoreJsonContext.Default.OperationStatusResponse, statusCode: StatusCodes.Status429TooManyRequests);
+            var authResult = EndpointHelpers.AuthorizeOperatorEndpoint(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.control");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
 
             var latest = runtime.RecentSenders.TryGetLatest(channelId);
             if (latest is null)
@@ -117,11 +114,10 @@ internal static class ControlEndpoints
 
         app.MapPost("/allowlists/{channelId}/tighten", (HttpContext ctx, string channelId) =>
         {
-            var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: true);
-            if (!auth.IsAuthorized)
-                return Results.Unauthorized();
-            if (!EndpointHelpers.TryConsumeOperatorRateLimit(ctx, operations, auth, "admin.control", out var blockedByPolicyId))
-                return Results.Json(new OperationStatusResponse { Success = false, Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'." }, CoreJsonContext.Default.OperationStatusResponse, statusCode: StatusCodes.Status429TooManyRequests);
+            var authResult = EndpointHelpers.AuthorizeOperatorEndpoint(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.control");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
 
             var paired = runtime.PairingManager.GetApprovedList()
                 .Select(s =>
@@ -150,11 +146,10 @@ internal static class ControlEndpoints
 
         app.MapPost("/admin/reload-skills", async (HttpContext ctx) =>
         {
-            var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: true);
-            if (!auth.IsAuthorized)
-                return Results.Unauthorized();
-            if (!EndpointHelpers.TryConsumeOperatorRateLimit(ctx, operations, auth, "admin.control", out var blockedByPolicyId))
-                return Results.Json(new OperationStatusResponse { Success = false, Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'." }, CoreJsonContext.Default.OperationStatusResponse, statusCode: StatusCodes.Status429TooManyRequests);
+            var authResult = EndpointHelpers.AuthorizeOperatorEndpoint(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.control");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
 
             var loadedSkillNames = await runtime.AgentRuntime.ReloadSkillsAsync(ctx.RequestAborted);
             AppendAudit(ctx, operations, auth, "skills_reload", "skills", $"Reloaded {loadedSkillNames.Count} skill(s).", true);
@@ -169,11 +164,10 @@ internal static class ControlEndpoints
 
         app.MapPost("/tools/approve", (HttpContext ctx, string approvalId, bool approved, string? requesterChannelId, string? requesterSenderId) =>
         {
-            var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: true);
-            if (!auth.IsAuthorized)
-                return Results.Unauthorized();
-            if (!EndpointHelpers.TryConsumeOperatorRateLimit(ctx, operations, auth, "admin.control", out var blockedByPolicyId))
-                return Results.Json(new OperationStatusResponse { Success = false, Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'." }, CoreJsonContext.Default.OperationStatusResponse, statusCode: StatusCodes.Status429TooManyRequests);
+            var authResult = EndpointHelpers.AuthorizeOperatorEndpoint(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.approvals.mutate");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
 
             if (string.IsNullOrWhiteSpace(approvalId))
                 return Results.Json(
@@ -181,8 +175,24 @@ internal static class ControlEndpoints
                     CoreJsonContext.Default.OperationStatusResponse,
                     statusCode: StatusCodes.Status400BadRequest);
 
-            if (!startup.Config.Security.RequireRequesterMatchForHttpToolApproval)
+            var hasRequesterIdentity =
+                !string.IsNullOrWhiteSpace(requesterChannelId) &&
+                !string.IsNullOrWhiteSpace(requesterSenderId);
+
+            if (!startup.Config.Security.RequireRequesterMatchForHttpToolApproval && !hasRequesterIdentity)
             {
+                if (!OperatorRoleNames.CanAccess(auth.Role, OperatorRoleNames.Admin))
+                {
+                    return Results.Json(
+                        new OperationStatusResponse
+                        {
+                            Success = false,
+                            Error = "Endpoint 'admin.approvals.override' requires role 'admin'."
+                        },
+                        CoreJsonContext.Default.OperationStatusResponse,
+                        statusCode: StatusCodes.Status403Forbidden);
+                }
+
                 var adminOutcome = runtime.ToolApprovalService.TrySetDecisionWithRequest(approvalId, approved, requesterChannelId: null, requesterSenderId: null, requireRequesterMatch: false);
                 if (adminOutcome.Result == ToolApprovalDecisionResult.Recorded && adminOutcome.Request is not null)
                 {
@@ -222,11 +232,11 @@ internal static class ControlEndpoints
                             Success = false,
                             Error = "No pending approval found for that id."
                         },
-                        CoreJsonContext.Default.OperationStatusResponse,
-                        statusCode: StatusCodes.Status404NotFound);
+                    CoreJsonContext.Default.OperationStatusResponse,
+                    statusCode: StatusCodes.Status404NotFound);
             }
 
-            if (string.IsNullOrWhiteSpace(requesterChannelId) || string.IsNullOrWhiteSpace(requesterSenderId))
+            if (!hasRequesterIdentity)
             {
                 return Results.Json(
                     new OperationStatusResponse
@@ -275,7 +285,9 @@ internal static class ControlEndpoints
                     new OperationStatusResponse
                     {
                         Success = true,
-                        Mode = "admin_requester_match_guard"
+                        Mode = startup.Config.Security.RequireRequesterMatchForHttpToolApproval
+                            ? "requester_match_required"
+                            : "requester_match_optional"
                     },
                     CoreJsonContext.Default.OperationStatusResponse),
                 ToolApprovalDecisionResult.Unauthorized => Results.Json(

@@ -112,6 +112,9 @@ internal sealed class IntegrationApiFacade
                 Id = session.Id,
                 ChannelId = session.ChannelId,
                 SenderId = session.SenderId,
+                StableSessionId = session.StableSessionBinding?.ExternalSessionId,
+                StableSessionNamespace = session.StableSessionBinding?.Namespace,
+                StableSessionOwnerKey = session.StableSessionBinding?.OwnerKey,
                 CreatedAt = session.CreatedAt,
                 LastActiveAt = session.LastActiveAt,
                 State = session.State,
@@ -212,6 +215,18 @@ internal sealed class IntegrationApiFacade
             Catalog = PublicCompatibilityCatalog.GetCatalog(compatibilityStatus, kind, category)
         };
 
+    public IntegrationCompatibilityExportResponse GetCompatibilityExport()
+        => new()
+        {
+            RequestedRuntimeMode = _startup.RuntimeState.RequestedMode,
+            EffectiveRuntimeMode = _startup.RuntimeState.EffectiveModeName,
+            DynamicCodeSupported = _startup.RuntimeState.DynamicCodeSupported,
+            Posture = SecurityPostureBuilder.Build(_startup, _runtime),
+            Channels = MapChannelReadiness(ChannelReadinessEvaluator.Evaluate(_startup.Config, _startup.IsNonLoopbackBind)),
+            Plugins = _runtime.Operations.PluginHealth.ListSnapshots(),
+            Catalog = PublicCompatibilityCatalog.GetCatalog()
+        };
+
     public IntegrationOperatorAuditResponse GetOperatorAudit(OperatorAuditQuery query)
         => new()
         {
@@ -250,6 +265,9 @@ internal sealed class IntegrationApiFacade
                 Id = session.Id,
                 ChannelId = session.ChannelId,
                 SenderId = session.SenderId,
+                StableSessionId = session.StableSessionBinding?.ExternalSessionId,
+                StableSessionNamespace = session.StableSessionBinding?.Namespace,
+                StableSessionOwnerKey = session.StableSessionBinding?.OwnerKey,
                 CreatedAt = session.CreatedAt,
                 LastActiveAt = session.LastActiveAt,
                 State = session.State,

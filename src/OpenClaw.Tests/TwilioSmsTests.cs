@@ -90,6 +90,7 @@ public sealed class TwilioSmsTests
 
         var res = await handler.HandleAsync(form, "bad", (_, _) => ValueTask.CompletedTask, CancellationToken.None);
         Assert.Equal(401, res.StatusCode);
+        Assert.Null(recent.TryGetLatest("sms"));
     }
 
     [Fact]

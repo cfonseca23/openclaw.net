@@ -99,7 +99,8 @@ internal static class CoreServicesExtensions
         {
             var svc = new ExecutionProcessService(
                 sp.GetRequiredService<ToolExecutionRouter>(),
-                sp.GetService<ILoggerFactory>()?.CreateLogger<ExecutionProcessService>());
+                sp.GetService<ILoggerFactory>()?.CreateLogger<ExecutionProcessService>(),
+                sp.GetService<RuntimeMetrics>());
             var eventStore = sp.GetService<RuntimeEventStore>();
             if (eventStore is not null)
             {

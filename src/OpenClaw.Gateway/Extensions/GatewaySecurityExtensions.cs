@@ -8,15 +8,32 @@ namespace OpenClaw.Gateway.Extensions;
 
 public static class GatewaySecurityExtensions
 {
+    public static void ApplyStrictPublicBindProfile(GatewayConfig config, bool isNonLoopbackBind)
+    {
+        if (!isNonLoopbackBind || !config.Security.StrictPublicBindProfile)
+            return;
+
+        config.Security.RequireRequesterMatchForHttpToolApproval = true;
+        config.Security.AllowUnsafeToolingOnPublicBind = false;
+        config.Security.AllowPluginBridgeOnPublicBind = false;
+        config.Security.AllowRawSecretRefsOnPublicBind = false;
+        config.Tooling.RequireToolApproval = true;
+        config.Tooling.ApprovalRequiredTools = config.Tooling.ApprovalRequiredTools
+            .Concat(["shell", "process", "write_file", "code_exec", "git"])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public static void EnforcePublicBindHardening(GatewayConfig config, bool isNonLoopbackBind)
     {
         if (!isNonLoopbackBind)
             return;
 
-        var localShellEnabled = config.Tooling.AllowShell &&
-            !ToolSandboxPolicy.IsRequireSandboxed(config, "shell", ToolSandboxMode.Prefer);
+        var localShellEnabled = IsUnsafeLocalToolExecutionExposed(config, "shell");
+        var localProcessEnabled = IsUnsafeLocalToolExecutionExposed(config, "process");
         var toolingUnsafe =
             localShellEnabled ||
+            localProcessEnabled ||
             config.Tooling.AllowedReadRoots.Contains("*", StringComparer.Ordinal) ||
             config.Tooling.AllowedWriteRoots.Contains("*", StringComparer.Ordinal);
 
@@ -24,7 +41,7 @@ public static class GatewaySecurityExtensions
         {
             throw new InvalidOperationException(
                 "Refusing to start with unsafe tooling settings on a non-loopback bind. " +
-                "Set OpenClaw:Tooling:AllowShell=false and restrict AllowedReadRoots/AllowedWriteRoots, " +
+                "Disable or isolate shell/process execution and restrict AllowedReadRoots/AllowedWriteRoots, " +
                 "or explicitly opt in via OpenClaw:Security:AllowUnsafeToolingOnPublicBind=true.");
         }
 
@@ -75,6 +92,107 @@ public static class GatewaySecurityExtensions
             }
         }
 
+        if (config.Channels.Sms.Twilio.Enabled)
+        {
+            if (!config.Channels.Sms.Twilio.ValidateSignature)
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Twilio SMS webhooks on a non-loopback bind without signature validation. " +
+                    "Set OpenClaw:Channels:Sms:Twilio:ValidateSignature=true.");
+            }
+
+            if (string.IsNullOrWhiteSpace(config.Channels.Sms.Twilio.WebhookPublicBaseUrl))
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Twilio SMS webhooks on a non-loopback bind without WebhookPublicBaseUrl. " +
+                    "Set OpenClaw:Channels:Sms:Twilio:WebhookPublicBaseUrl so signatures can be verified.");
+            }
+
+            if (string.IsNullOrWhiteSpace(SecretResolver.Resolve(config.Channels.Sms.Twilio.AuthTokenRef)))
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Twilio SMS webhooks on a non-loopback bind without AuthTokenRef. " +
+                    "Set OpenClaw:Channels:Sms:Twilio:AuthTokenRef.");
+            }
+        }
+
+        if (config.Channels.Telegram.Enabled)
+        {
+            if (!config.Channels.Telegram.ValidateSignature)
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Telegram webhooks on a non-loopback bind without webhook secret validation. " +
+                    "Set OpenClaw:Channels:Telegram:ValidateSignature=true.");
+            }
+
+            var secretToken = SecretResolver.Resolve(config.Channels.Telegram.WebhookSecretTokenRef)
+                ?? config.Channels.Telegram.WebhookSecretToken;
+            if (string.IsNullOrWhiteSpace(secretToken))
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Telegram webhooks on a non-loopback bind without a webhook secret token. " +
+                    "Set OpenClaw:Channels:Telegram:WebhookSecretTokenRef or WebhookSecretToken.");
+            }
+        }
+
+        if (config.Channels.Teams.Enabled)
+        {
+            if (!config.Channels.Teams.ValidateToken)
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Teams inbound webhooks on a non-loopback bind without JWT validation. " +
+                    "Set OpenClaw:Channels:Teams:ValidateToken=true.");
+            }
+
+            var appId = SecretResolver.Resolve(config.Channels.Teams.AppIdRef) ?? config.Channels.Teams.AppId;
+            var appPassword = SecretResolver.Resolve(config.Channels.Teams.AppPasswordRef) ?? config.Channels.Teams.AppPassword;
+            var tenantId = SecretResolver.Resolve(config.Channels.Teams.TenantIdRef) ?? config.Channels.Teams.TenantId;
+            if (string.IsNullOrWhiteSpace(appId) ||
+                string.IsNullOrWhiteSpace(appPassword) ||
+                string.IsNullOrWhiteSpace(tenantId))
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Teams inbound webhooks on a non-loopback bind without full token-validation credentials. " +
+                    "Set AppId/AppIdRef, AppPassword/AppPasswordRef, and TenantId/TenantIdRef.");
+            }
+        }
+
+        if (config.Channels.Slack.Enabled)
+        {
+            if (!config.Channels.Slack.ValidateSignature)
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Slack webhooks on a non-loopback bind without signature validation. " +
+                    "Set OpenClaw:Channels:Slack:ValidateSignature=true.");
+            }
+
+            var signingSecret = SecretResolver.Resolve(config.Channels.Slack.SigningSecretRef) ?? config.Channels.Slack.SigningSecret;
+            if (string.IsNullOrWhiteSpace(signingSecret))
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Slack webhooks on a non-loopback bind without a signing secret. " +
+                    "Set OpenClaw:Channels:Slack:SigningSecretRef or SigningSecret.");
+            }
+        }
+
+        if (config.Channels.Discord.Enabled)
+        {
+            if (!config.Channels.Discord.ValidateSignature)
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Discord interactions on a non-loopback bind without signature validation. " +
+                    "Set OpenClaw:Channels:Discord:ValidateSignature=true.");
+            }
+
+            var publicKey = SecretResolver.Resolve(config.Channels.Discord.PublicKeyRef) ?? config.Channels.Discord.PublicKey;
+            if (string.IsNullOrWhiteSpace(publicKey))
+            {
+                throw new InvalidOperationException(
+                    "Refusing to start with Discord interactions on a non-loopback bind without a public key. " +
+                    "Set OpenClaw:Channels:Discord:PublicKeyRef or PublicKey.");
+            }
+        }
+
         if (!config.Security.AllowRawSecretRefsOnPublicBind)
         {
             var rawSecretPaths = FindRawSecretRefs(config);
@@ -88,6 +206,24 @@ public static class GatewaySecurityExtensions
                     "Use env:... / OS keychain storage, or explicitly opt in via OpenClaw:Security:AllowRawSecretRefsOnPublicBind=true.");
             }
         }
+    }
+
+    public static bool IsUnsafeLocalToolExecutionExposed(GatewayConfig config, string toolName)
+    {
+        if (!config.Tooling.AllowShell)
+            return false;
+
+        if (TryResolveExecutionBackend(config, toolName, out var backendName))
+            return string.Equals(backendName, "local", StringComparison.OrdinalIgnoreCase);
+
+        return toolName switch
+        {
+            "shell" => !ToolSandboxPolicy.IsRequireSandboxed(config, "shell", ToolSandboxMode.Prefer) &&
+                       string.Equals(config.Execution.DefaultBackend, "local", StringComparison.OrdinalIgnoreCase),
+            "process" => !ToolSandboxPolicy.IsRequireSandboxed(config, "process", ToolSandboxMode.Prefer) &&
+                         string.Equals(config.Execution.DefaultBackend, "local", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
     }
 
     private static IReadOnlyList<string> FindRawSecretRefs(GatewayConfig root)
@@ -144,5 +280,28 @@ public static class GatewaySecurityExtensions
                path.Contains("Token", StringComparison.OrdinalIgnoreCase) ||
                path.Contains("Password", StringComparison.OrdinalIgnoreCase) ||
                path.Contains("ApiKey", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryResolveExecutionBackend(GatewayConfig config, string toolName, out string? backendName)
+    {
+        backendName = null;
+        if (!config.Execution.Enabled)
+            return false;
+
+        if (config.Execution.Tools.TryGetValue(toolName, out var route) && !string.IsNullOrWhiteSpace(route.Backend))
+        {
+            backendName = route.Backend;
+            return true;
+        }
+
+        if (string.Equals(toolName, "process", StringComparison.OrdinalIgnoreCase) &&
+            config.Execution.Tools.TryGetValue("shell", out var shellRoute) &&
+            !string.IsNullOrWhiteSpace(shellRoute.Backend))
+        {
+            backendName = shellRoute.Backend;
+            return true;
+        }
+
+        return false;
     }
 }

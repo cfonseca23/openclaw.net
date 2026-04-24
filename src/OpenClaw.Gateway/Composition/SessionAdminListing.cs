@@ -46,6 +46,12 @@ internal static class SessionAdminQuery
         return session.Id.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
             || session.ChannelId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
             || session.SenderId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrWhiteSpace(session.StableSessionBinding?.ExternalSessionId) &&
+                session.StableSessionBinding.ExternalSessionId.Contains(query.Search, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrWhiteSpace(session.StableSessionBinding?.Namespace) &&
+                session.StableSessionBinding.Namespace.Contains(query.Search, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrWhiteSpace(session.StableSessionBinding?.OwnerKey) &&
+                session.StableSessionBinding.OwnerKey.Contains(query.Search, StringComparison.OrdinalIgnoreCase))
             || metadata.Tags.Any(tag => tag.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -90,6 +96,12 @@ internal static class SessionAdminQuery
         return summary.Id.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
             || summary.ChannelId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
             || summary.SenderId.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrWhiteSpace(summary.StableSessionId) &&
+                summary.StableSessionId.Contains(query.Search, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrWhiteSpace(summary.StableSessionNamespace) &&
+                summary.StableSessionNamespace.Contains(query.Search, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrWhiteSpace(summary.StableSessionOwnerKey) &&
+                summary.StableSessionOwnerKey.Contains(query.Search, StringComparison.OrdinalIgnoreCase))
             || metadata.Tags.Any(tag => tag.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
     }
 }

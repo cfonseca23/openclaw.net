@@ -58,7 +58,8 @@ internal static class SecurityServicesExtensions
         services.AddSingleton(sp =>
             new PluginHealthService(
                 startup.Config.Memory.StoragePath,
-                sp.GetRequiredService<ILogger<PluginHealthService>>()));
+                sp.GetRequiredService<ILogger<PluginHealthService>>(),
+                startup.Config.Plugins));
         services.AddSingleton(sp =>
             new ContractStore(
                 startup.Config.Memory.StoragePath,

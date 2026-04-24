@@ -246,6 +246,12 @@ public sealed class MemoryRecallConfig
 
 public sealed class SecurityConfig
 {
+    /// <summary>
+    /// Applies a fail-closed public-bind preset before startup validation. This forces safer approval and
+    /// tooling defaults for Internet-facing deployments without introducing a separate policy system.
+    /// </summary>
+    public bool StrictPublicBindProfile { get; set; } = false;
+
     public bool AllowQueryStringToken { get; set; } = false;
     public string[] AllowedOrigins { get; set; } = [];
     public bool TrustForwardedHeaders { get; set; } = false;

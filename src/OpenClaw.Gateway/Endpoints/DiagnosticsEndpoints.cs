@@ -111,8 +111,15 @@ internal static class DiagnosticsEndpoints
 
         app.MapPost("/memory/retention/sweep", async (HttpContext ctx, bool dryRun) =>
         {
-            if (!EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: true).IsAuthorized)
-                return Results.Unauthorized();
+            var authResult = EndpointHelpers.AuthorizeOperatorEndpoint(
+                ctx,
+                startup,
+                browserSessions,
+                runtime.Operations,
+                requireCsrf: true,
+                endpointScope: "admin.memory.retention.sweep");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
 
             try
             {

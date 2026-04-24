@@ -5,6 +5,9 @@ public sealed class SessionSummary
     public required string Id { get; init; }
     public required string ChannelId { get; init; }
     public required string SenderId { get; init; }
+    public string? StableSessionId { get; init; }
+    public string? StableSessionNamespace { get; init; }
+    public string? StableSessionOwnerKey { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset LastActiveAt { get; init; }
     public SessionState State { get; init; }

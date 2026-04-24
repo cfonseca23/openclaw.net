@@ -100,8 +100,6 @@ internal sealed class TwilioSmsWebhookHandler
         if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
             return WebhookResult.BadRequest("Missing From/To.");
 
-        await _recentSenders.RecordAsync("sms", from, senderName: null, ct);
-
         body ??= "";
         if (body.Length > _config.MaxInboundChars)
             return WebhookResult.Status(413);
@@ -121,6 +119,8 @@ internal sealed class TwilioSmsWebhookHandler
                 return WebhookResult.TwiMl(_config.HelpText);
             return WebhookResult.Unauthorized();
         }
+
+        await _recentSenders.RecordAsync("sms", from, senderName: null, ct);
 
         MaybePruneRateWindows();
         var limiter = _rate.GetOrAdd(from, _ => new RateWindow(_config.RateLimitPerFromPerMinute));

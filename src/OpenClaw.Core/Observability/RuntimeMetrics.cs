@@ -28,6 +28,12 @@ public sealed class RuntimeMetrics
     private long _pluginBridgeAuthFailures;
     private long _pluginBridgeRestartAttempts;
     private long _pluginBridgeRestartFailures;
+    private long _processStarts;
+    private long _processCompletions;
+    private long _processFailures;
+    private long _processKills;
+    private long _processTimeouts;
+    private long _processHistoryEvictions;
     private long _sandboxLeaseCreates;
     private long _sandboxLeaseReuses;
     private long _sandboxLeaseRecoveries;
@@ -52,6 +58,7 @@ public sealed class RuntimeMetrics
     // ── Gauges ────────────────────────────────────────────────────────────
     private int _activeSessions;
     private int _circuitBreakerState; // 0=Closed, 1=Open, 2=HalfOpen
+    private int _retainedProcesses;
     private long _retentionLastRunAtUnixSeconds;
     private long _retentionLastRunDurationMs;
     private int _retentionLastRunSucceeded;
@@ -74,6 +81,12 @@ public sealed class RuntimeMetrics
     public long PluginBridgeAuthFailures => Interlocked.Read(ref _pluginBridgeAuthFailures);
     public long PluginBridgeRestartAttempts => Interlocked.Read(ref _pluginBridgeRestartAttempts);
     public long PluginBridgeRestartFailures => Interlocked.Read(ref _pluginBridgeRestartFailures);
+    public long ProcessStarts => Interlocked.Read(ref _processStarts);
+    public long ProcessCompletions => Interlocked.Read(ref _processCompletions);
+    public long ProcessFailures => Interlocked.Read(ref _processFailures);
+    public long ProcessKills => Interlocked.Read(ref _processKills);
+    public long ProcessTimeouts => Interlocked.Read(ref _processTimeouts);
+    public long ProcessHistoryEvictions => Interlocked.Read(ref _processHistoryEvictions);
     public long SandboxLeaseCreates => Interlocked.Read(ref _sandboxLeaseCreates);
     public long SandboxLeaseReuses => Interlocked.Read(ref _sandboxLeaseReuses);
     public long SandboxLeaseRecoveries => Interlocked.Read(ref _sandboxLeaseRecoveries);
@@ -96,6 +109,7 @@ public sealed class RuntimeMetrics
     public long PromptCacheWarmFailures => Interlocked.Read(ref _promptCacheWarmFailures);
     public int ActiveSessions => Volatile.Read(ref _activeSessions);
     public int CircuitBreakerState => Volatile.Read(ref _circuitBreakerState);
+    public int RetainedProcesses => Volatile.Read(ref _retainedProcesses);
     public long RetentionLastRunAtUnixSeconds => Interlocked.Read(ref _retentionLastRunAtUnixSeconds);
     public long RetentionLastRunDurationMs => Interlocked.Read(ref _retentionLastRunDurationMs);
     public int RetentionLastRunSucceeded => Volatile.Read(ref _retentionLastRunSucceeded);
@@ -118,6 +132,12 @@ public sealed class RuntimeMetrics
     public void IncrementPluginBridgeAuthFailures() => Interlocked.Increment(ref _pluginBridgeAuthFailures);
     public void IncrementPluginBridgeRestartAttempts() => Interlocked.Increment(ref _pluginBridgeRestartAttempts);
     public void IncrementPluginBridgeRestartFailures() => Interlocked.Increment(ref _pluginBridgeRestartFailures);
+    public void IncrementProcessStarts() => Interlocked.Increment(ref _processStarts);
+    public void IncrementProcessCompletions() => Interlocked.Increment(ref _processCompletions);
+    public void IncrementProcessFailures() => Interlocked.Increment(ref _processFailures);
+    public void IncrementProcessKills() => Interlocked.Increment(ref _processKills);
+    public void IncrementProcessTimeouts() => Interlocked.Increment(ref _processTimeouts);
+    public void IncrementProcessHistoryEvictions() => Interlocked.Increment(ref _processHistoryEvictions);
     public void IncrementSandboxLeaseCreates() => Interlocked.Increment(ref _sandboxLeaseCreates);
     public void IncrementSandboxLeaseReuses() => Interlocked.Increment(ref _sandboxLeaseReuses);
     public void IncrementSandboxLeaseRecoveries() => Interlocked.Increment(ref _sandboxLeaseRecoveries);
@@ -140,6 +160,7 @@ public sealed class RuntimeMetrics
     public void IncrementPromptCacheWarmFailures() => Interlocked.Increment(ref _promptCacheWarmFailures);
     public void SetActiveSessions(int count) => Volatile.Write(ref _activeSessions, count);
     public void SetCircuitBreakerState(int state) => Volatile.Write(ref _circuitBreakerState, state);
+    public void SetRetainedProcesses(int count) => Volatile.Write(ref _retainedProcesses, count);
     public void SetRetentionLastRun(DateTimeOffset runAtUtc, long durationMs, bool succeeded)
     {
         Interlocked.Exchange(ref _retentionLastRunAtUnixSeconds, runAtUtc.ToUnixTimeSeconds());
@@ -170,6 +191,12 @@ public sealed class RuntimeMetrics
         PluginBridgeAuthFailures = PluginBridgeAuthFailures,
         PluginBridgeRestartAttempts = PluginBridgeRestartAttempts,
         PluginBridgeRestartFailures = PluginBridgeRestartFailures,
+        ProcessStarts = ProcessStarts,
+        ProcessCompletions = ProcessCompletions,
+        ProcessFailures = ProcessFailures,
+        ProcessKills = ProcessKills,
+        ProcessTimeouts = ProcessTimeouts,
+        ProcessHistoryEvictions = ProcessHistoryEvictions,
         SandboxLeaseCreates = SandboxLeaseCreates,
         SandboxLeaseReuses = SandboxLeaseReuses,
         SandboxLeaseRecoveries = SandboxLeaseRecoveries,
@@ -194,7 +221,8 @@ public sealed class RuntimeMetrics
         RetentionLastRunDurationMs = RetentionLastRunDurationMs,
         RetentionLastRunSucceeded = RetentionLastRunSucceeded,
         ActiveSessions = ActiveSessions,
-        CircuitBreakerState = CircuitBreakerState
+        CircuitBreakerState = CircuitBreakerState,
+        RetainedProcesses = RetainedProcesses
     };
 }
 
@@ -218,6 +246,12 @@ public struct MetricsSnapshot
     public long PluginBridgeAuthFailures { get; set; }
     public long PluginBridgeRestartAttempts { get; set; }
     public long PluginBridgeRestartFailures { get; set; }
+    public long ProcessStarts { get; set; }
+    public long ProcessCompletions { get; set; }
+    public long ProcessFailures { get; set; }
+    public long ProcessKills { get; set; }
+    public long ProcessTimeouts { get; set; }
+    public long ProcessHistoryEvictions { get; set; }
     public long SandboxLeaseCreates { get; set; }
     public long SandboxLeaseReuses { get; set; }
     public long SandboxLeaseRecoveries { get; set; }
@@ -243,4 +277,5 @@ public struct MetricsSnapshot
     public int RetentionLastRunSucceeded { get; set; }
     public int ActiveSessions { get; set; }
     public int CircuitBreakerState { get; set; }
+    public int RetainedProcesses { get; set; }
 }

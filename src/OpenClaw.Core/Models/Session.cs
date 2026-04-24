@@ -22,6 +22,7 @@ public sealed class Session
     public required string Id { get; init; }
     public required string ChannelId { get; init; }
     public required string SenderId { get; init; }
+    public StableSessionBindingInfo? StableSessionBinding { get; set; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset LastActiveAt { get; set; } = DateTimeOffset.UtcNow;
     public List<ChatTurn> History { get; init; } = [];
@@ -130,6 +131,14 @@ public sealed class Session
         => TotalInputTokens + TotalOutputTokens;
 }
 
+public sealed class StableSessionBindingInfo
+{
+    public string ExternalSessionId { get; set; } = "";
+    public string Namespace { get; set; } = "";
+    public string OwnerKey { get; set; } = "";
+    public DateTimeOffset BoundAtUtc { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public enum SessionState : byte
 {
     Active,
@@ -207,6 +216,7 @@ public sealed class SessionDelegationChildSummary
 /// AOT-compatible JSON serialization context for all core models.
 /// </summary>
 [JsonSerializable(typeof(Session))]
+[JsonSerializable(typeof(StableSessionBindingInfo))]
 [JsonSerializable(typeof(ChatTurn))]
 [JsonSerializable(typeof(ToolInvocation))]
 [JsonSerializable(typeof(List<ToolInvocation>))]
@@ -594,6 +604,7 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(IntegrationProvidersResponse))]
 [JsonSerializable(typeof(IntegrationPluginsResponse))]
 [JsonSerializable(typeof(IntegrationCompatibilityCatalogResponse))]
+[JsonSerializable(typeof(IntegrationCompatibilityExportResponse))]
 [JsonSerializable(typeof(IntegrationOperatorAuditResponse))]
 [JsonSerializable(typeof(IntegrationDashboardResponse))]
 [JsonSerializable(typeof(IntegrationSessionSearchResponse))]

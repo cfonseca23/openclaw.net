@@ -200,6 +200,45 @@ internal static class EndpointHelpers
         return operations.ActorRateLimits.TryConsume("ip", GetRemoteIpKey(ctx), endpointScope, out blockedByPolicyId);
     }
 
+    public static (OperatorAuthorizationResult? Authorization, IResult? Failure) AuthorizeOperatorEndpoint(
+        HttpContext ctx,
+        GatewayStartupContext startup,
+        BrowserSessionAuthService browserSessions,
+        RuntimeOperationsState operations,
+        bool requireCsrf,
+        string endpointScope)
+    {
+        var auth = AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf);
+        if (!auth.IsAuthorized)
+            return (null, Results.Unauthorized());
+
+        if (!IsRoleAllowed(auth.Role, endpointScope, out var requiredRole))
+        {
+            return (null, Results.Json(
+                new OperationStatusResponse
+                {
+                    Success = false,
+                    Error = $"Endpoint '{endpointScope}' requires role '{requiredRole}'."
+                },
+                CoreJsonContext.Default.OperationStatusResponse,
+                statusCode: StatusCodes.Status403Forbidden));
+        }
+
+        if (!TryConsumeOperatorRateLimit(ctx, operations, auth, endpointScope, out var blockedByPolicyId))
+        {
+            return (null, Results.Json(
+                new OperationStatusResponse
+                {
+                    Success = false,
+                    Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'."
+                },
+                CoreJsonContext.Default.OperationStatusResponse,
+                statusCode: StatusCodes.Status429TooManyRequests));
+        }
+
+        return (auth, null);
+    }
+
     public static bool IsRoleAllowed(string grantedRole, string endpointScope, out string requiredRole)
     {
         requiredRole = GetRequiredRole(endpointScope);
@@ -232,6 +271,7 @@ internal static class EndpointHelpers
         }
 
         if (scope.StartsWith("admin.memory.mutate", StringComparison.Ordinal) ||
+            scope.StartsWith("admin.memory.retention.sweep", StringComparison.Ordinal) ||
             scope.StartsWith("admin.agent-bundle.mutate", StringComparison.Ordinal) ||
             scope.StartsWith("admin.profiles.mutate", StringComparison.Ordinal) ||
             scope.StartsWith("admin.learning.mutate", StringComparison.Ordinal) ||
@@ -242,6 +282,8 @@ internal static class EndpointHelpers
             scope.StartsWith("admin.session.promote", StringComparison.Ordinal) ||
             scope.StartsWith("admin.branch.restore", StringComparison.Ordinal) ||
             scope.StartsWith("admin.session.metadata", StringComparison.Ordinal) ||
+            scope.StartsWith("admin.control", StringComparison.Ordinal) ||
+            scope.StartsWith("admin.approvals", StringComparison.Ordinal) ||
             scope.StartsWith("admin.approval-policies.mutate", StringComparison.Ordinal) ||
             scope.StartsWith("admin.heartbeat.mutate", StringComparison.Ordinal) ||
             scope.StartsWith("admin.channels.auth.mutate", StringComparison.Ordinal) ||

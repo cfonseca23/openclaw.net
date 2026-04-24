@@ -115,6 +115,17 @@ public sealed class IntegrationCompatibilityCatalogResponse
     public required CompatibilityCatalogResponse Catalog { get; init; }
 }
 
+public sealed class IntegrationCompatibilityExportResponse
+{
+    public required string RequestedRuntimeMode { get; init; }
+    public required string EffectiveRuntimeMode { get; init; }
+    public bool DynamicCodeSupported { get; init; }
+    public required SecurityPostureResponse Posture { get; init; }
+    public IReadOnlyList<ChannelReadinessDto> Channels { get; init; } = [];
+    public IReadOnlyList<PluginHealthSnapshot> Plugins { get; init; } = [];
+    public required CompatibilityCatalogResponse Catalog { get; init; }
+}
+
 public sealed class IntegrationOperatorAuditResponse
 {
     public required OperatorAuditQuery Query { get; init; }

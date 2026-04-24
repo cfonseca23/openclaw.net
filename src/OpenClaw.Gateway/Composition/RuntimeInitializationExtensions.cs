@@ -36,6 +36,7 @@ internal static class RuntimeInitializationExtensions
         GatewayStartupContext startup)
     {
         var config = startup.Config;
+        GatewaySecurityExtensions.ApplyStrictPublicBindProfile(config, startup.IsNonLoopbackBind);
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
         var startupLogger = loggerFactory.CreateLogger("Startup");
         var startupNoticeSink = app.Services.GetRequiredService<IStartupNoticeSink>();
@@ -630,7 +631,7 @@ internal static class RuntimeInitializationExtensions
         {
             var defaults = new[]
             {
-                "shell", "write_file", "code_exec", "git", "home_assistant_write", "mqtt_publish", "notion_write",
+                "shell", "process", "write_file", "code_exec", "git", "home_assistant_write", "mqtt_publish", "notion_write",
                 "database", "email", "inbox_zero", "calendar", "delegate_agent"
             };
 

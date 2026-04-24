@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Core.Models;
+using OpenClaw.Core.Observability;
 
 namespace OpenClaw.Agent.Execution;
 
@@ -23,6 +24,7 @@ internal sealed class ManagedExecutionProcess : IAsyncDisposable
     private readonly TaskCompletionSource<int> _exitTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private int? _exitCode;
+    private int _exitNotificationSent;
     private bool _killed;
     private bool _timedOut;
 
@@ -69,7 +71,7 @@ internal sealed class ManagedExecutionProcess : IAsyncDisposable
             _exitCode = _process.ExitCode;
             CompletedAtUtc = DateTimeOffset.UtcNow;
             _exitTcs.TrySetResult(_process.ExitCode);
-            OnExited?.Invoke(ProcessId, _exitCode == 0 ? "completed" : "failed");
+            NotifyExit();
         };
     }
 
@@ -112,7 +114,6 @@ internal sealed class ManagedExecutionProcess : IAsyncDisposable
                 _timedOut = true;
                 logger?.LogWarning("Background process {ProcessId} timed out after {TimeoutSeconds}s.", ProcessId, TimeoutSeconds.Value);
                 await KillAsync(CancellationToken.None);
-                OnExited?.Invoke(ProcessId, "timed_out");
             }
             catch
             {
@@ -221,6 +222,21 @@ internal sealed class ManagedExecutionProcess : IAsyncDisposable
         _process.Dispose();
     }
 
+    private void NotifyExit()
+    {
+        if (Interlocked.Exchange(ref _exitNotificationSent, 1) != 0)
+            return;
+
+        var outcome = _timedOut
+            ? "timed_out"
+            : _killed
+                ? "killed"
+                : _exitCode == 0
+                    ? "completed"
+                    : "failed";
+        OnExited?.Invoke(ProcessId, outcome);
+    }
+
     private static string BuildCommandPreview(string command, IReadOnlyList<string> arguments)
     {
         var preview = arguments.Count == 0
@@ -243,8 +259,12 @@ internal sealed class ManagedExecutionProcess : IAsyncDisposable
 
 public sealed class ExecutionProcessService : IAsyncDisposable
 {
+    private const int MaxRetainedCompletedProcesses = 64;
+    private static readonly TimeSpan CompletedProcessRetention = TimeSpan.FromMinutes(30);
+
     private readonly ToolExecutionRouter _router;
     private readonly ILogger<ExecutionProcessService>? _logger;
+    private readonly RuntimeMetrics? _metrics;
     private readonly ConcurrentDictionary<string, ManagedExecutionProcess> _processes = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -253,16 +273,34 @@ public sealed class ExecutionProcessService : IAsyncDisposable
     /// </summary>
     public Action<string, string, string>? OnRuntimeEvent { get; set; }
 
-    public ExecutionProcessService(ToolExecutionRouter router, ILogger<ExecutionProcessService>? logger = null)
+    public ExecutionProcessService(ToolExecutionRouter router, ILogger<ExecutionProcessService>? logger = null, RuntimeMetrics? metrics = null)
     {
         _router = router;
         _logger = logger;
+        _metrics = metrics;
     }
 
     public async Task<ExecutionProcessHandle> StartAsync(ExecutionProcessStartRequest request, CancellationToken ct)
     {
+        PruneCompletedProcesses();
         var route = _router.ResolveBackendForProcess();
         var backendName = string.IsNullOrWhiteSpace(request.BackendName) ? route.BackendName : request.BackendName;
+        if (route.SandboxMode == ToolSandboxMode.Require &&
+            !string.Equals(backendName, "opensandbox", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Process tool requires sandboxing, but no sandbox-capable background execution backend is configured. " +
+                "Route 'process' to an isolated process backend or relax the sandbox requirement.");
+        }
+
+        if (route.SandboxMode == ToolSandboxMode.Require &&
+            string.Equals(backendName, "opensandbox", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Process tool requires sandboxing, but the configured sandbox provider does not support long-running background processes. " +
+                "Route 'process' to a process-capable backend such as Docker or SSH, or disable it on this surface.");
+        }
+
         if (!_router.TryGetProcessBackend(backendName, out var backend))
             throw new InvalidOperationException($"Execution backend '{backendName}' does not support background processes.");
         if (backend is null)
@@ -290,10 +328,11 @@ public sealed class ExecutionProcessService : IAsyncDisposable
 
         var process = await backend.StartProcessAsync(normalized, ct);
         _processes[process.ProcessId] = process;
-        process.OnExited = (pid, outcome) =>
-            OnRuntimeEvent?.Invoke("process", outcome, $"Process {pid} {outcome} (exit code: {process.GetStatus().ExitCode}).");
+        process.OnExited = (_, outcome) => HandleProcessExit(process, outcome);
         process.StartTimeoutMonitor(_logger);
         OnRuntimeEvent?.Invoke("process", "started", $"Process {process.ProcessId} started on '{backendName}': {process.CommandPreview}");
+        _metrics?.IncrementProcessStarts();
+        _metrics?.SetRetainedProcesses(_processes.Count);
 
         return new ExecutionProcessHandle
         {
@@ -310,20 +349,30 @@ public sealed class ExecutionProcessService : IAsyncDisposable
     }
 
     public IReadOnlyList<ExecutionProcessStatus> List(string? ownerSessionId = null)
-        => _processes.Values
+    {
+        PruneCompletedProcesses();
+        return _processes.Values
             .Where(p => string.IsNullOrWhiteSpace(ownerSessionId) || string.Equals(p.OwnerSessionId, ownerSessionId, StringComparison.Ordinal))
             .OrderByDescending(static p => p.CreatedAtUtc)
             .Select(static p => p.GetStatus())
             .ToArray();
+    }
 
     public ExecutionProcessStatus? GetStatus(string processId, string? ownerSessionId)
-        => TryGetOwnedProcess(processId, ownerSessionId, out var process) ? process.GetStatus() : null;
+    {
+        PruneCompletedProcesses();
+        return TryGetOwnedProcess(processId, ownerSessionId, out var process) ? process.GetStatus() : null;
+    }
 
     public ExecutionProcessLogResult? ReadLog(ExecutionProcessLogRequest request)
-        => TryGetOwnedProcess(request.ProcessId, request.OwnerSessionId, out var process) ? process.ReadLog(request) : null;
+    {
+        PruneCompletedProcesses();
+        return TryGetOwnedProcess(request.ProcessId, request.OwnerSessionId, out var process) ? process.ReadLog(request) : null;
+    }
 
     public async Task<ExecutionProcessStatus?> WaitAsync(string processId, string? ownerSessionId, CancellationToken ct)
     {
+        PruneCompletedProcesses();
         if (!TryGetOwnedProcess(processId, ownerSessionId, out var process))
             return null;
 
@@ -333,6 +382,7 @@ public sealed class ExecutionProcessService : IAsyncDisposable
 
     public async Task<bool> WriteAsync(ExecutionProcessInputRequest request, CancellationToken ct)
     {
+        PruneCompletedProcesses();
         if (!TryGetOwnedProcess(request.ProcessId, request.OwnerSessionId, out var process))
             return false;
 
@@ -343,11 +393,11 @@ public sealed class ExecutionProcessService : IAsyncDisposable
 
     public async Task<bool> KillAsync(string processId, string? ownerSessionId, CancellationToken ct)
     {
+        PruneCompletedProcesses();
         if (!TryGetOwnedProcess(processId, ownerSessionId, out var process))
             return false;
 
         await process.KillAsync(ct);
-        OnRuntimeEvent?.Invoke("process", "killed", $"Process {processId} terminated.");
         return true;
     }
 
@@ -369,6 +419,7 @@ public sealed class ExecutionProcessService : IAsyncDisposable
         }
 
         _processes.Clear();
+        _metrics?.SetRetainedProcesses(0);
     }
 
     private bool TryGetOwnedProcess(string processId, string? ownerSessionId, out ManagedExecutionProcess process)
@@ -384,5 +435,59 @@ public sealed class ExecutionProcessService : IAsyncDisposable
 
         process = null!;
         return false;
+    }
+
+    private void HandleProcessExit(ManagedExecutionProcess process, string outcome)
+    {
+        var exitCode = process.GetStatus().ExitCode;
+        OnRuntimeEvent?.Invoke("process", outcome, $"Process {process.ProcessId} {outcome} (exit code: {exitCode}).");
+        switch (outcome)
+        {
+            case "completed":
+                _metrics?.IncrementProcessCompletions();
+                break;
+            case "failed":
+                _metrics?.IncrementProcessFailures();
+                break;
+            case "killed":
+                _metrics?.IncrementProcessKills();
+                break;
+            case "timed_out":
+                _metrics?.IncrementProcessTimeouts();
+                break;
+        }
+
+        PruneCompletedProcesses();
+    }
+
+    private void PruneCompletedProcesses()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var completed = _processes.Values
+            .Select(process => (Process: process, Status: process.GetStatus()))
+            .Where(static item => item.Status.State != ExecutionProcessState.Running)
+            .OrderByDescending(static item => item.Status.CompletedAtUtc ?? item.Process.CreatedAtUtc)
+            .ToArray();
+
+        var retainedIds = completed
+            .Where(item => now - (item.Status.CompletedAtUtc ?? item.Process.CreatedAtUtc) <= CompletedProcessRetention)
+            .Take(MaxRetainedCompletedProcesses)
+            .Select(static item => item.Process.ProcessId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in completed)
+        {
+            if (retainedIds.Contains(item.Process.ProcessId))
+                continue;
+
+            if (_processes.TryRemove(item.Process.ProcessId, out var removed))
+            {
+                _metrics?.IncrementProcessHistoryEvictions();
+                OnRuntimeEvent?.Invoke("process", "evicted_from_history", $"Process {removed.ProcessId} evicted from retained history.");
+                _ = removed.DisposeAsync().AsTask();
+            }
+        }
+
+        _metrics?.SetRetainedProcesses(_processes.Count);
     }
 }

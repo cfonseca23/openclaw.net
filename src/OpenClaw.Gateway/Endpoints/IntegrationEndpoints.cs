@@ -116,6 +116,17 @@ internal static class IntegrationEndpoints
                 CoreJsonContext.Default.IntegrationCompatibilityCatalogResponse);
         });
 
+        group.MapGet("/compatibility/export", (HttpContext ctx) =>
+        {
+            var failure = AuthorizeAndConsume(ctx, startup, runtime, browserSessions, endpointScope: "integration.read", requireCsrf: false);
+            if (failure is not null)
+                return failure;
+
+            return Results.Json(
+                facade.GetCompatibilityExport(),
+                CoreJsonContext.Default.IntegrationCompatibilityExportResponse);
+        });
+
         group.MapGet("/operator-audit", (HttpContext ctx) =>
         {
             var failure = AuthorizeAndConsume(ctx, startup, runtime, browserSessions, endpointScope: "integration.read", requireCsrf: false);

@@ -90,38 +90,6 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryNo
             var encodedId = EncodeKey(sessionId);
             var filePath = Path.Combine(_sessionsPath, $"{encodedId}.json");
 
-            // Legacy migration: check for unencoded filename
-            var legacyPath = Path.Combine(_sessionsPath, $"{sessionId}.json");
-            if (!File.Exists(filePath) && File.Exists(legacyPath))
-            {
-                try
-                {
-                    await using var legacyStream = new FileStream(legacyPath, new FileStreamOptions
-                    {
-                        Mode = FileMode.Open,
-                        Access = FileAccess.Read,
-                        Share = FileShare.Read,
-                        Options = FileOptions.Asynchronous | FileOptions.SequentialScan
-                    });
-                    var session = await JsonSerializer.DeserializeAsync(legacyStream, CoreJsonContext.Default.Session, ct);
-                    if (session is not null)
-                    {
-                        // Migrate to encoded filename
-                        await SaveSessionAsync(session, ct);
-                        File.Delete(legacyPath);
-                        return session;
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    throw QuarantineCorruptSessionFile(legacyPath, sessionId, ex);
-                }
-            }
-
             if (!File.Exists(filePath))
                 return null;
 
@@ -1089,7 +1057,10 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryNo
                     var s = query.Search;
                     if (!session.Id.Contains(s, StringComparison.OrdinalIgnoreCase) &&
                         !session.ChannelId.Contains(s, StringComparison.OrdinalIgnoreCase) &&
-                        !session.SenderId.Contains(s, StringComparison.OrdinalIgnoreCase))
+                        !session.SenderId.Contains(s, StringComparison.OrdinalIgnoreCase) &&
+                        !(session.StableSessionBinding?.ExternalSessionId?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false) &&
+                        !(session.StableSessionBinding?.Namespace?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false) &&
+                        !(session.StableSessionBinding?.OwnerKey?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false))
                         continue;
                 }
 
@@ -1098,6 +1069,9 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryNo
                     Id = session.Id,
                     ChannelId = session.ChannelId,
                     SenderId = session.SenderId,
+                    StableSessionId = session.StableSessionBinding?.ExternalSessionId,
+                    StableSessionNamespace = session.StableSessionBinding?.Namespace,
+                    StableSessionOwnerKey = session.StableSessionBinding?.OwnerKey,
                     CreatedAt = session.CreatedAt,
                     LastActiveAt = session.LastActiveAt,
                     State = session.State,

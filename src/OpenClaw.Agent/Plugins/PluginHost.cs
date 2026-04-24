@@ -11,7 +11,7 @@ namespace OpenClaw.Agent.Plugins;
 /// Orchestrates plugin lifecycle: discovery, loading, tool registration, and shutdown.
 /// Each plugin runs in its own Node.js child process via the plugin bridge.
 /// </summary>
-public sealed class PluginHost : IAsyncDisposable
+public sealed class PluginHost : IAsyncDisposable, IPluginRuntimeTelemetrySource
 {
     private readonly PluginsConfig _config;
     private readonly string _bridgeScriptPath;
@@ -506,6 +506,18 @@ public sealed class PluginHost : IAsyncDisposable
         }
 
         restartCount = 0;
+        return false;
+    }
+
+    public bool TryGetMemorySnapshot(string pluginId, out PluginBridgeMemorySnapshot? snapshot)
+    {
+        if (_bridgesByPluginId.TryGetValue(pluginId, out var bridge))
+        {
+            snapshot = bridge.GetMemorySnapshot();
+            return snapshot is not null;
+        }
+
+        snapshot = null;
         return false;
     }
 

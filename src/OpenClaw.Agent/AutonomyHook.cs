@@ -171,6 +171,7 @@ public sealed class AutonomyHook : IToolHook
         var prop = toolName switch
         {
             "git" => "cwd",
+            "process" => "working_directory",
             _ => "path"
         };
 

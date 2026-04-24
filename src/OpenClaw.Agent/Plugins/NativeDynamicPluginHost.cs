@@ -15,7 +15,7 @@ namespace OpenClaw.Agent.Plugins;
 /// <summary>
 /// Loads in-process .NET plugins behind an explicit JIT-only runtime mode boundary.
 /// </summary>
-public sealed class NativeDynamicPluginHost : IAsyncDisposable
+public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTelemetrySource
 {
     private const string ManifestFileName = "openclaw.native-plugin.json";
 
@@ -193,6 +193,12 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable
     {
         restartCount = 0;
         return _loadedPlugins.Any(item => string.Equals(item.PluginId, pluginId, StringComparison.Ordinal));
+    }
+
+    public bool TryGetMemorySnapshot(string pluginId, out PluginBridgeMemorySnapshot? snapshot)
+    {
+        snapshot = null;
+        return false;
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "Dynamic native plugins are JIT-only and blocked in AOT mode.")]

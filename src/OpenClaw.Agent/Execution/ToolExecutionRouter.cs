@@ -29,7 +29,8 @@ public sealed class ToolExecutionRouter
         {
             ["local"] = new LocalExecutionBackend(config.Execution.Profiles.TryGetValue("local", out var localProfile)
                 ? localProfile
-                : new ExecutionBackendProfileConfig { Type = ExecutionBackendType.Local })
+                : new ExecutionBackendProfileConfig { Type = ExecutionBackendType.Local },
+                config.Tooling.WorkspaceRoot)
         };
 
         foreach (var (name, profile) in config.Execution.Profiles)
@@ -39,7 +40,7 @@ public sealed class ToolExecutionRouter
 
             if (profile.Type.Equals(ExecutionBackendType.Local, StringComparison.OrdinalIgnoreCase))
             {
-                backends[name] = new LocalExecutionBackend(profile);
+                backends[name] = new LocalExecutionBackend(profile, config.Tooling.WorkspaceRoot);
             }
             else if (profile.Type.Equals(ExecutionBackendType.Docker, StringComparison.OrdinalIgnoreCase))
             {
@@ -72,13 +73,9 @@ public sealed class ToolExecutionRouter
         template = null;
         sandboxMode = ToolSandboxMode.None;
 
-        if (_config.Execution.Enabled &&
-            _config.Execution.Tools.TryGetValue(tool.Name, out var configuredRoute) &&
-            !string.IsNullOrWhiteSpace(configuredRoute.Backend))
+        if (TryResolveConfiguredRoute(tool.Name, out var configuredRoute, out template))
         {
             route = configuredRoute;
-            if (_config.Execution.Profiles.TryGetValue(configuredRoute.Backend, out var profile))
-                template = profile.Image;
             return true;
         }
 
@@ -156,29 +153,35 @@ public sealed class ToolExecutionRouter
 
     public ExecutionRouteResolution ResolveBackendForProcess()
     {
-        if (_config.Execution.Enabled)
+        if (TryResolveConfiguredRoute("process", out var processRoute, out var processTemplate))
         {
-            if (_config.Execution.Tools.TryGetValue("process", out var processRoute) &&
-                !string.IsNullOrWhiteSpace(processRoute.Backend))
-            {
-                return new ExecutionRouteResolution(
-                    processRoute.Backend,
-                    processRoute.FallbackBackend,
-                    ResolveTemplate(processRoute.Backend),
-                    processRoute.RequireWorkspace,
-                    ToolSandboxMode.None);
-            }
+            return new ExecutionRouteResolution(
+                processRoute!.Backend,
+                processRoute.FallbackBackend,
+                processTemplate,
+                processRoute.RequireWorkspace,
+                ToolSandboxMode.None);
+        }
 
-            if (_config.Execution.Tools.TryGetValue("shell", out var shellRoute) &&
-                !string.IsNullOrWhiteSpace(shellRoute.Backend))
-            {
-                return new ExecutionRouteResolution(
-                    shellRoute.Backend,
-                    shellRoute.FallbackBackend,
-                    ResolveTemplate(shellRoute.Backend),
-                    shellRoute.RequireWorkspace,
-                    ToolSandboxMode.None);
-            }
+        if (TryResolveConfiguredRoute("shell", out var shellRoute, out var shellTemplate))
+        {
+            return new ExecutionRouteResolution(
+                shellRoute!.Backend,
+                shellRoute.FallbackBackend,
+                shellTemplate,
+                shellRoute.RequireWorkspace,
+                ToolSandboxMode.None);
+        }
+
+        var sandboxMode = ToolSandboxPolicy.ResolveMode(_config, "process", ToolSandboxMode.Prefer);
+        if (sandboxMode != ToolSandboxMode.None && ToolSandboxPolicy.IsOpenSandboxProviderConfigured(_config))
+        {
+            return new ExecutionRouteResolution(
+                "opensandbox",
+                null,
+                ToolSandboxPolicy.ResolveTemplate(_config, "process"),
+                RequireWorkspace: false,
+                sandboxMode);
         }
 
         return new ExecutionRouteResolution(
@@ -186,7 +189,7 @@ public sealed class ToolExecutionRouter
             null,
             ResolveTemplate(_config.Execution.DefaultBackend),
             RequiresWorkspace(_config.Execution.DefaultBackend),
-            ToolSandboxMode.None);
+            sandboxMode);
     }
 
     internal bool TryGetProcessBackend(string backendName, out IExecutionProcessBackend? backend)
@@ -201,4 +204,21 @@ public sealed class ToolExecutionRouter
 
     private string? ResolveTemplate(string backendName)
         => _config.Execution.Profiles.TryGetValue(backendName, out var profile) ? profile.Image : null;
+
+    private bool TryResolveConfiguredRoute(string toolName, out ExecutionToolRouteConfig? route, out string? template)
+    {
+        template = null;
+        if (_config.Execution.Enabled &&
+            _config.Execution.Tools.TryGetValue(toolName, out var configuredRoute) &&
+            !string.IsNullOrWhiteSpace(configuredRoute.Backend))
+        {
+            route = configuredRoute;
+            if (_config.Execution.Profiles.TryGetValue(configuredRoute.Backend, out var profile))
+                template = profile.Image;
+            return true;
+        }
+
+        route = null;
+        return false;
+    }
 }

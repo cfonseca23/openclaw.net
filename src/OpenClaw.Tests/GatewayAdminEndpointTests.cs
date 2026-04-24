@@ -805,6 +805,84 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task ApprovalSimulation_DeniesProcessWorkingDirectoryOutsideWorkspace()
+    {
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), "openclaw-process-workspace", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workspaceRoot);
+
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true, config =>
+        {
+            config.Tooling.WorkspaceOnly = true;
+            config.Tooling.WorkspaceRoot = workspaceRoot;
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/approvals/simulate")
+        {
+            Content = JsonContent("""{"toolName":"process","argumentsJson":"{\"working_directory\":\"/tmp\"}","autonomyMode":"full","requireToolApproval":false}""")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        Assert.Equal("deny", payload.RootElement.GetProperty("decision").GetString());
+    }
+
+    [Fact]
+    public async Task ApprovalSimulation_DeniesProcessForbiddenWorkingDirectory()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true, config =>
+        {
+            config.Tooling.ForbiddenPathGlobs = ["/workspace/secret*"];
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/approvals/simulate")
+        {
+            Content = JsonContent("""{"toolName":"process","argumentsJson":"{\"working_directory\":\"/workspace/secret-data\"}","autonomyMode":"full","requireToolApproval":false}""")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        Assert.Equal("deny", payload.RootElement.GetProperty("decision").GetString());
+    }
+
+    [Fact]
+    public async Task ApprovalSimulation_ReportsExecutionRouteMetadata()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true, config =>
+        {
+            config.Tooling.AllowShell = true;
+            config.Sandbox = new SandboxConfig
+            {
+                Provider = SandboxProviderNames.OpenSandbox,
+                Endpoint = "http://sandbox.example",
+                Tools = new Dictionary<string, SandboxToolConfig>(StringComparer.Ordinal)
+                {
+                    ["process"] = new()
+                    {
+                        Mode = nameof(ToolSandboxMode.Require),
+                        Template = "ghcr.io/example/process:latest"
+                    }
+                }
+            };
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/approvals/simulate")
+        {
+            Content = JsonContent("""{"toolName":"process","argumentsJson":"{\"working_directory\":\"/workspace\"}","autonomyMode":"full","requireToolApproval":false}""")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        Assert.Equal("opensandbox", payload.RootElement.GetProperty("executionBackend").GetString());
+        Assert.Equal("require", payload.RootElement.GetProperty("executionSandboxMode").GetString());
+    }
+
+    [Fact]
     public async Task IncidentExport_RedactsSensitiveRuntimeEventContent()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
@@ -1741,7 +1819,10 @@ public sealed class GatewayAdminEndpointTests
             "history:4",
             secondPayload.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
 
-        var persisted = await harness.MemoryStore.GetSessionAsync(stableSessionId, CancellationToken.None);
+        var activeSession = await FindStableSessionAsync(harness, stableSessionId);
+        Assert.NotNull(activeSession);
+
+        var persisted = await harness.MemoryStore.GetSessionAsync(activeSession!.Id, CancellationToken.None);
         Assert.NotNull(persisted);
         Assert.Collection(
             persisted!.History,
@@ -1771,7 +1852,7 @@ public sealed class GatewayAdminEndpointTests
                 Assert.Equal("history:4", turn.Content);
             });
 
-        Assert.True(harness.Runtime.SessionManager.RemoveActive(stableSessionId));
+        Assert.True(harness.Runtime.SessionManager.RemoveActive(activeSession.Id));
     }
 
     [Fact]
@@ -1816,7 +1897,175 @@ public sealed class GatewayAdminEndpointTests
             "ok",
             payload.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
 
-        Assert.True(harness.Runtime.SessionManager.RemoveActive("stable-save-failure"));
+        var activeSession = await FindStableSessionAsync(harness, "stable-save-failure");
+        Assert.NotNull(activeSession);
+        Assert.True(harness.Runtime.SessionManager.RemoveActive(activeSession!.Id));
+    }
+
+    [Fact]
+    public async Task ChatCompletions_StableSession_RejectsUnsafeStableSessionId()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: false);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        {
+            Content = JsonContent("""{"messages":[{"role":"user","content":"hello"}]}""")
+        };
+        request.Headers.Add("X-OpenClaw-Session-Id", "../escape-target");
+
+        var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("unsafe stable session id", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ChatCompletions_StableSession_NamespacesByRequester()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: false);
+        harness.Runtime.AgentRuntime.RunAsync(
+                Arg.Any<Session>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ToolApprovalCallback?>(),
+                Arg.Any<JsonElement?>())
+            .Returns(callInfo =>
+            {
+                var session = callInfo.Arg<Session>();
+                var userMessage = callInfo.ArgAt<string>(1);
+                session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
+                var response = $"ok:{session.Id}";
+                session.History.Add(new ChatTurn { Role = "assistant", Content = response });
+                return Task.FromResult(response);
+            });
+
+        const string stableSessionId = "shared-stable-session";
+
+        using var firstRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        {
+            Content = JsonContent("""{"messages":[{"role":"user","content":"hello"}]}""")
+        };
+        firstRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "owner-token");
+        firstRequest.Headers.Add("X-OpenClaw-Session-Id", stableSessionId);
+
+        using var firstResponse = await harness.Client.SendAsync(firstRequest);
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+
+        using var secondRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        {
+            Content = JsonContent("""{"messages":[{"role":"user","content":"hello again"}]}""")
+        };
+        secondRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "different-owner-token");
+        secondRequest.Headers.Add("X-OpenClaw-Session-Id", stableSessionId);
+
+        using var secondResponse = await harness.Client.SendAsync(secondRequest);
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+
+        var stableSessions = (await harness.Runtime.SessionManager.ListActiveAsync(CancellationToken.None))
+            .Where(session => string.Equals(session.StableSessionBinding?.ExternalSessionId, stableSessionId, StringComparison.Ordinal))
+            .OrderBy(session => session.SenderId, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(2, stableSessions.Length);
+        Assert.All(stableSessions, session =>
+        {
+            Assert.Equal(stableSessionId, session.StableSessionBinding?.ExternalSessionId);
+            Assert.Equal(session.SenderId, session.StableSessionBinding?.OwnerKey);
+        });
+        Assert.NotEqual(stableSessions[0].Id, stableSessions[1].Id);
+        Assert.NotEqual(
+            stableSessions[0].StableSessionBinding?.Namespace,
+            stableSessions[1].StableSessionBinding?.Namespace);
+
+        using var adminRequest = new HttpRequestMessage(HttpMethod.Get, $"/admin/sessions?search={Uri.EscapeDataString(stableSessionId)}");
+        adminRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        using var adminResponse = await harness.Client.SendAsync(adminRequest);
+        Assert.Equal(HttpStatusCode.OK, adminResponse.StatusCode);
+
+        using var adminPayload = await ReadJsonAsync(adminResponse);
+        var activeSessions = adminPayload.RootElement.GetProperty("active").EnumerateArray().ToArray();
+        Assert.Equal(2, activeSessions.Length);
+        Assert.All(activeSessions, item =>
+        {
+            Assert.Equal(stableSessionId, item.GetProperty("stableSessionId").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(item.GetProperty("stableSessionNamespace").GetString()));
+            Assert.False(string.IsNullOrWhiteSpace(item.GetProperty("stableSessionOwnerKey").GetString()));
+        });
+    }
+
+    [Fact]
+    public async Task ChatCompletions_StableSession_SerializesConcurrentRequests()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: false);
+        var firstInvocationStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstInvocation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+        var inFlight = 0;
+        var maxInFlight = 0;
+
+        harness.Runtime.AgentRuntime.RunAsync(
+                Arg.Any<Session>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ToolApprovalCallback?>(),
+                Arg.Any<JsonElement?>())
+            .Returns(async callInfo =>
+            {
+                var currentInFlight = Interlocked.Increment(ref inFlight);
+                UpdateMax(ref maxInFlight, currentInFlight);
+                var invocation = Interlocked.Increment(ref callCount);
+                try
+                {
+                    if (invocation == 1)
+                    {
+                        firstInvocationStarted.TrySetResult(true);
+                        await releaseFirstInvocation.Task;
+                    }
+
+                    var session = callInfo.Arg<Session>();
+                    var userMessage = callInfo.ArgAt<string>(1);
+                    session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
+                    var response = $"history:{session.History.Count}";
+                    session.History.Add(new ChatTurn { Role = "assistant", Content = response });
+                    return response;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref inFlight);
+                }
+            });
+
+        const string stableSessionId = "serialized-stable-session";
+        var firstRequest = CreateStableChatCompletionRequest(stableSessionId, "first", bearerToken: "shared-owner");
+        var secondRequest = CreateStableChatCompletionRequest(stableSessionId, "second", bearerToken: "shared-owner");
+
+        var firstResponseTask = harness.Client.SendAsync(firstRequest);
+        await firstInvocationStarted.Task;
+
+        var secondResponseTask = harness.Client.SendAsync(secondRequest);
+        await Task.Delay(100);
+        Assert.Equal(1, Volatile.Read(ref maxInFlight));
+
+        releaseFirstInvocation.SetResult(true);
+
+        using var firstResponse = await firstResponseTask;
+        using var secondResponse = await secondResponseTask;
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        Assert.Equal(2, Volatile.Read(ref callCount));
+        Assert.Equal(1, Volatile.Read(ref maxInFlight));
+
+        var activeSession = await FindStableSessionAsync(harness, stableSessionId);
+        Assert.NotNull(activeSession);
+
+        var persisted = await harness.MemoryStore.GetSessionAsync(activeSession!.Id, CancellationToken.None);
+        Assert.NotNull(persisted);
+        Assert.Collection(
+            persisted!.History,
+            turn => Assert.Equal("first", turn.Content),
+            turn => Assert.Equal("history:1", turn.Content),
+            turn => Assert.Equal("second", turn.Content),
+            turn => Assert.Equal("history:3", turn.Content));
     }
 
     [Fact]
@@ -1871,7 +2120,10 @@ public sealed class GatewayAdminEndpointTests
             "history:3",
             GetResponsesAssistantText(secondPayload.RootElement));
 
-        var persisted = await harness.MemoryStore.GetSessionAsync(stableSessionId, CancellationToken.None);
+        var activeSession = await FindStableSessionAsync(harness, stableSessionId);
+        Assert.NotNull(activeSession);
+
+        var persisted = await harness.MemoryStore.GetSessionAsync(activeSession!.Id, CancellationToken.None);
         Assert.NotNull(persisted);
         Assert.Collection(
             persisted!.History,
@@ -1896,7 +2148,7 @@ public sealed class GatewayAdminEndpointTests
                 Assert.Equal("history:3", turn.Content);
             });
 
-        Assert.True(harness.Runtime.SessionManager.RemoveActive(stableSessionId));
+        Assert.True(harness.Runtime.SessionManager.RemoveActive(activeSession.Id));
     }
 
     [Fact]
@@ -1933,7 +2185,9 @@ public sealed class GatewayAdminEndpointTests
         using var payload = await ReadJsonAsync(response);
         Assert.Equal("ok", GetResponsesAssistantText(payload.RootElement));
 
-        Assert.True(harness.Runtime.SessionManager.RemoveActive("stable-responses-save-failure"));
+        var activeSession = await FindStableSessionAsync(harness, "stable-responses-save-failure");
+        Assert.NotNull(activeSession);
+        Assert.True(harness.Runtime.SessionManager.RemoveActive(activeSession!.Id));
     }
 
     [Fact]
@@ -2174,6 +2428,76 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task CompatibilityExport_ReturnsPostureChannelsAndCatalog()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true, config =>
+        {
+            config.Sandbox = new SandboxConfig
+            {
+                Provider = SandboxProviderNames.OpenSandbox,
+                Endpoint = "http://sandbox.example",
+                Tools = new Dictionary<string, SandboxToolConfig>(StringComparer.Ordinal)
+                {
+                    ["process"] = new()
+                    {
+                        Mode = nameof(ToolSandboxMode.Require),
+                        Template = "ghcr.io/example/process:latest"
+                    }
+                }
+            };
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/integration/compatibility/export");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await ReadJsonAsync(response);
+        Assert.True(payload.RootElement.GetProperty("posture").GetProperty("publicBind").GetBoolean());
+        Assert.True(payload.RootElement.GetProperty("posture").GetProperty("stableSessionsScopedByRequester").GetBoolean());
+        Assert.True(payload.RootElement.GetProperty("posture").GetProperty("processToolSafeForPublicBind").GetBoolean());
+        Assert.True(payload.RootElement.GetProperty("channels").GetArrayLength() >= 1);
+        Assert.True(payload.RootElement.GetProperty("catalog").GetProperty("items").GetArrayLength() >= 1);
+    }
+
+    [Fact]
+    public async Task ViewerRole_CannotMutateControlOrDiagnosticsEndpoints()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        var viewerToken = CreateOperatorToken(harness, OperatorRoleNames.Viewer, "viewer-control");
+
+        using var pairingRequest = new HttpRequestMessage(HttpMethod.Post, "/pairing/revoke?channelId=telegram&senderId=user1");
+        pairingRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", viewerToken);
+        var pairingResponse = await harness.Client.SendAsync(pairingRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, pairingResponse.StatusCode);
+
+        using var sweepRequest = new HttpRequestMessage(HttpMethod.Post, "/memory/retention/sweep?dryRun=true");
+        sweepRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", viewerToken);
+        var sweepResponse = await harness.Client.SendAsync(sweepRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, sweepResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task ViewerRole_CannotListOrMutatePendingApprovals()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        var viewerToken = CreateOperatorToken(harness, OperatorRoleNames.Viewer, "viewer-approvals");
+        var approval = harness.Runtime.ToolApprovalService.Create("sess1", "telegram", "sender1", "shell", """{"cmd":"ls"}""", TimeSpan.FromMinutes(5));
+
+        using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/tools/approvals");
+        listRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", viewerToken);
+        var listResponse = await harness.Client.SendAsync(listRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, listResponse.StatusCode);
+
+        using var approveRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/tools/approve?approvalId={Uri.EscapeDataString(approval.ApprovalId)}&approved=true&requesterChannelId=telegram&requesterSenderId=sender1");
+        approveRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", viewerToken);
+        var approveResponse = await harness.Client.SendAsync(approveRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, approveResponse.StatusCode);
+    }
+
+    [Fact]
     public async Task ProviderPolicies_Audit_AndRateLimits_AreServed()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
@@ -2332,8 +2656,8 @@ public sealed class GatewayAdminEndpointTests
                     Diagnostics = []
                 }
             ],
-            pluginHost: null,
-            nativeDynamicPluginHost: null);
+            pluginRuntimeTelemetry: null,
+            nativeDynamicPluginRuntimeTelemetry: null);
         harness.Runtime.LoadedSkills =
         [
             new SkillDefinition
@@ -4227,6 +4551,51 @@ public sealed class GatewayAdminEndpointTests
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authToken);
         return await client.SendAsync(request);
+    }
+
+    private static HttpRequestMessage CreateStableChatCompletionRequest(string stableSessionId, string message, string? bearerToken = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        {
+            Content = JsonContent($$"""{"messages":[{"role":"user","content":"{{message}}"}]}""")
+        };
+        if (!string.IsNullOrWhiteSpace(bearerToken))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        request.Headers.Add("X-OpenClaw-Session-Id", stableSessionId);
+        return request;
+    }
+
+    private static string CreateOperatorToken(GatewayTestHarness harness, string role, string username)
+    {
+        var operatorAccounts = harness.App.Services.GetRequiredService<OperatorAccountService>();
+        var account = operatorAccounts.Create(new OperatorAccountCreateRequest
+        {
+            Username = username,
+            Password = "viewer-pass",
+            Role = role
+        });
+        var token = operatorAccounts.CreateToken(account.Id, new OperatorAccountTokenCreateRequest { Label = username });
+        Assert.NotNull(token);
+        return token!.Token;
+    }
+
+    private static async Task<Session?> FindStableSessionAsync(GatewayTestHarness harness, string externalStableSessionId)
+    {
+        var sessions = await harness.Runtime.SessionManager.ListActiveAsync(CancellationToken.None);
+        return sessions.FirstOrDefault(session =>
+            string.Equals(session.StableSessionBinding?.ExternalSessionId, externalStableSessionId, StringComparison.Ordinal));
+    }
+
+    private static void UpdateMax(ref int target, int value)
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref target);
+            if (value <= current)
+                return;
+            if (Interlocked.CompareExchange(ref target, value, current) == current)
+                return;
+        }
     }
 
     private static async Task WaitForAsync(Func<object?, bool> condition, object? state, TimeSpan timeout)

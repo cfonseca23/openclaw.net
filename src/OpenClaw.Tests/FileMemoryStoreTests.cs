@@ -149,6 +149,32 @@ public sealed class FileMemoryStoreTests
     }
 
     [Fact]
+    public async Task GetSessionAsync_DoesNotLoadLegacyTraversalPath()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-file-memory-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var escapedTarget = Path.Combine(storagePath, "escape-target.json");
+            await File.WriteAllTextAsync(
+                escapedTarget,
+                """{"Id":"../escape-target","ChannelId":"test","SenderId":"user","History":[]}""",
+                CancellationToken.None);
+
+            var store = new FileMemoryStore(storagePath, 4);
+            var loaded = await store.GetSessionAsync("../escape-target", CancellationToken.None);
+
+            Assert.Null(loaded);
+            Assert.True(File.Exists(escapedTarget));
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ListNotesWithPrefixAsync_LongKeys_ReturnsOriginalKey()
     {
         var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-file-memory-tests", Guid.NewGuid().ToString("N"));

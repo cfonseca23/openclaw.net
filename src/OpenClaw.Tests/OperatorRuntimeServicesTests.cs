@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using OpenClaw.Agent.Plugins;
 using OpenClaw.Core.Models;
+using OpenClaw.Core.Plugins;
 using OpenClaw.Gateway;
 using Xunit;
 
@@ -144,5 +146,88 @@ public sealed class OperatorRuntimeServicesTests
         Assert.True(snapshot.Disabled);
         Assert.False(snapshot.Loaded);
         Assert.Equal("maintenance", snapshot.PendingReason);
+    }
+
+    [Fact]
+    public void PluginHealthService_AutoQuarantinesBridgePluginWhenBudgetExceeded()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-ops-tests", Guid.NewGuid().ToString("N"));
+        var service = new PluginHealthService(
+            storagePath,
+            NullLogger<PluginHealthService>.Instance,
+            new PluginsConfig
+            {
+                RuntimeBudget = new PluginBridgeBudgetConfig
+                {
+                    MaxRestartCount = 1,
+                    MaxWorkingSetBytes = 1024,
+                    MaxCompatibilityErrors = 1
+                }
+            });
+        var telemetry = new TestPluginRuntimeTelemetrySource();
+        telemetry.SetRestartCount("plugin.alpha", 3);
+        telemetry.SetMemorySnapshot("plugin.alpha", new PluginBridgeMemorySnapshot
+        {
+            ProcessId = 42,
+            WorkingSetBytes = 4096,
+            PrivateMemoryBytes = 8192
+        });
+
+        service.SetRuntimeReports(
+            [
+                new PluginLoadReport
+                {
+                    PluginId = "plugin.alpha",
+                    SourcePath = "/tmp/plugins/alpha",
+                    EntryPath = "/tmp/plugins/alpha/index.js",
+                    Origin = "bridge",
+                    Loaded = true,
+                    EffectiveRuntimeMode = "jit",
+                    Diagnostics =
+                    [
+                        new PluginCompatibilityDiagnostic { Severity = "error", Code = "compat.one", Message = "first" },
+                        new PluginCompatibilityDiagnostic { Severity = "error", Code = "compat.two", Message = "second" }
+                    ]
+                }
+            ],
+            telemetry,
+            nativeDynamicPluginRuntimeTelemetry: null);
+
+        var snapshot = Assert.Single(service.ListSnapshots());
+        Assert.True(snapshot.Quarantined);
+        Assert.Equal("budget", snapshot.QuarantineSource);
+        Assert.Equal(3, snapshot.RestartCount);
+        Assert.Equal(4096, snapshot.WorkingSetBytes);
+        Assert.Contains(snapshot.BudgetViolations, item => item.Contains("restart count", StringComparison.Ordinal));
+        Assert.Contains(snapshot.BudgetViolations, item => item.Contains("working set", StringComparison.Ordinal));
+        Assert.Contains(snapshot.BudgetViolations, item => item.Contains("compatibility error count", StringComparison.Ordinal));
+        Assert.Contains("plugin.alpha", service.GetBlockedPluginIds(), StringComparer.Ordinal);
+    }
+
+    private sealed class TestPluginRuntimeTelemetrySource : IPluginRuntimeTelemetrySource
+    {
+        private readonly Dictionary<string, int> _restartCounts = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, PluginBridgeMemorySnapshot> _memorySnapshots = new(StringComparer.Ordinal);
+
+        public void SetRestartCount(string pluginId, int restartCount)
+            => _restartCounts[pluginId] = restartCount;
+
+        public void SetMemorySnapshot(string pluginId, PluginBridgeMemorySnapshot snapshot)
+            => _memorySnapshots[pluginId] = snapshot;
+
+        public bool TryGetRestartCount(string pluginId, out int restartCount)
+            => _restartCounts.TryGetValue(pluginId, out restartCount);
+
+        public bool TryGetMemorySnapshot(string pluginId, out PluginBridgeMemorySnapshot? snapshot)
+        {
+            if (_memorySnapshots.TryGetValue(pluginId, out var stored))
+            {
+                snapshot = stored;
+                return true;
+            }
+
+            snapshot = null;
+            return false;
+        }
     }
 }

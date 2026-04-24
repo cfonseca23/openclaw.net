@@ -121,6 +121,9 @@ public static class ToolSandboxPolicy
     public static IEnumerable<(string ToolName, ToolSandboxMode DefaultMode)> EnumerateBuiltInCandidates(GatewayConfig config)
     {
         if (!config.Tooling.ReadOnlyMode && config.Tooling.AllowShell)
+            yield return ("process", ToolSandboxMode.Prefer);
+
+        if (!config.Tooling.ReadOnlyMode && config.Tooling.AllowShell)
             yield return ("shell", ToolSandboxMode.Prefer);
 
         if (!config.Tooling.ReadOnlyMode && config.Plugins.Native.CodeExec.Enabled)
