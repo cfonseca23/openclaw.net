@@ -285,24 +285,34 @@ public sealed class ExecutionProcessService : IAsyncDisposable
         PruneCompletedProcesses();
         var route = _router.ResolveBackendForProcess();
         var backendName = string.IsNullOrWhiteSpace(request.BackendName) ? route.BackendName : request.BackendName;
-        if (route.SandboxMode == ToolSandboxMode.Require &&
-            !string.Equals(backendName, "opensandbox", StringComparison.OrdinalIgnoreCase))
+        if (route.SandboxMode == ToolSandboxMode.Require)
         {
-            throw new InvalidOperationException(
-                "Process tool requires sandboxing, but no sandbox-capable background execution backend is configured. " +
-                "Route 'process' to an isolated process backend or relax the sandbox requirement.");
-        }
+            if (string.Equals(backendName, "opensandbox", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Process tool requires sandboxing, but the configured sandbox provider does not support long-running background processes. " +
+                    "Route 'process' to a process-capable backend such as Docker or SSH, or disable it on this surface.");
+            }
 
-        if (route.SandboxMode == ToolSandboxMode.Require &&
-            string.Equals(backendName, "opensandbox", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                "Process tool requires sandboxing, but the configured sandbox provider does not support long-running background processes. " +
-                "Route 'process' to a process-capable backend such as Docker or SSH, or disable it on this surface.");
+            if (!_router.IsIsolatedProcessBackend(backendName))
+            {
+                throw new InvalidOperationException(
+                    "Process tool requires sandboxing, but no sandbox-capable background execution backend is configured. " +
+                    "Route 'process' to an isolated process backend or relax the sandbox requirement.");
+            }
         }
 
         if (!_router.TryGetProcessBackend(backendName, out var backend))
+        {
+            if (string.Equals(backendName, "opensandbox", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Execution backend 'opensandbox' does not support long-running background processes. " +
+                    "Route 'process' to a process-capable backend such as Docker or SSH.");
+            }
+
             throw new InvalidOperationException($"Execution backend '{backendName}' does not support background processes.");
+        }
         if (backend is null)
             throw new InvalidOperationException($"Execution backend '{backendName}' is unavailable.");
 

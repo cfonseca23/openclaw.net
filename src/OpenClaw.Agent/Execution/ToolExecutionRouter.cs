@@ -202,6 +202,24 @@ public sealed class ToolExecutionRouter
         return backend is not null;
     }
 
+    internal bool IsIsolatedProcessBackend(string backendName)
+    {
+        if (string.IsNullOrWhiteSpace(backendName) ||
+            string.Equals(backendName, "opensandbox", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!_config.Execution.Profiles.TryGetValue(backendName, out var profile) || !profile.Enabled)
+            return false;
+
+        if (profile.Type.Equals(ExecutionBackendType.Local, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return _backends.TryGetValue(backendName, out var executionBackend)
+               && executionBackend is IExecutionProcessBackend;
+    }
+
     private string? ResolveTemplate(string backendName)
         => _config.Execution.Profiles.TryGetValue(backendName, out var profile) ? profile.Image : null;
 

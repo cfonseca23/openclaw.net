@@ -1994,6 +1994,37 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task ChatCompletions_StableSession_BindingConflict_ReleasesSessionLock()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: false);
+        const string stableSessionId = "binding-conflict-chat";
+        const string bearerToken = "owner-token";
+        var requesterKey = CreateHttpRequesterKey(bearerToken);
+        var binding = CreateStableSessionBinding(stableSessionId, requesterKey);
+        var scopedSessionId = BuildScopedStableSessionId(binding);
+        var conflictingSession = await harness.Runtime.SessionManager.GetOrCreateByIdAsync(
+            scopedSessionId,
+            "openai-http",
+            "another-requester",
+            CancellationToken.None);
+        conflictingSession.StableSessionBinding = new StableSessionBindingInfo
+        {
+            ExternalSessionId = stableSessionId,
+            Namespace = binding.Namespace,
+            OwnerKey = "another-requester",
+            BoundAtUtc = DateTimeOffset.UtcNow
+        };
+
+        using var request = CreateStableChatCompletionRequest(stableSessionId, "hello", bearerToken);
+        using var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("belongs to another requester scope", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+
+        await AssertSessionLockReleasedAsync(harness, scopedSessionId);
+    }
+
+    [Fact]
     public async Task ChatCompletions_StableSession_SerializesConcurrentRequests()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: false);
@@ -2149,6 +2180,43 @@ public sealed class GatewayAdminEndpointTests
             });
 
         Assert.True(harness.Runtime.SessionManager.RemoveActive(activeSession.Id));
+    }
+
+    [Fact]
+    public async Task Responses_StableSession_BindingConflict_ReleasesSessionLock()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        const string stableSessionId = "binding-conflict-responses";
+        var bearerToken = harness.AuthToken;
+        var requesterKey = CreateHttpRequesterKey(bearerToken);
+        var binding = CreateStableSessionBinding(stableSessionId, requesterKey);
+        var scopedSessionId = BuildScopedStableSessionId(binding);
+        var conflictingSession = await harness.Runtime.SessionManager.GetOrCreateByIdAsync(
+            scopedSessionId,
+            "openai-responses",
+            "another-requester",
+            CancellationToken.None);
+        conflictingSession.StableSessionBinding = new StableSessionBindingInfo
+        {
+            ExternalSessionId = stableSessionId,
+            Namespace = binding.Namespace,
+            OwnerKey = "another-requester",
+            BoundAtUtc = DateTimeOffset.UtcNow
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/responses")
+        {
+            Content = JsonContent("""{"input":"hello"}""")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        request.Headers.Add("X-OpenClaw-Session-Id", stableSessionId);
+
+        using var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("belongs to another requester scope", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+
+        await AssertSessionLockReleasedAsync(harness, scopedSessionId);
     }
 
     [Fact]
@@ -4565,6 +4633,28 @@ public sealed class GatewayAdminEndpointTests
         return request;
     }
 
+    private static string CreateHttpRequesterKey(string bearerToken)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(bearerToken));
+        return "token:" + Convert.ToHexString(hash.AsSpan(0, 8));
+    }
+
+    private static StableSessionBindingInfo CreateStableSessionBinding(string stableSessionId, string requesterKey)
+    {
+        var namespaceHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(requesterKey)).AsSpan(0, 8))
+            .ToLowerInvariant();
+        return new StableSessionBindingInfo
+        {
+            ExternalSessionId = stableSessionId,
+            Namespace = namespaceHash,
+            OwnerKey = requesterKey,
+            BoundAtUtc = DateTimeOffset.UtcNow
+        };
+    }
+
+    private static string BuildScopedStableSessionId(StableSessionBindingInfo binding)
+        => $"openai-stable:{binding.Namespace}:{binding.ExternalSessionId}";
+
     private static string CreateOperatorToken(GatewayTestHarness harness, string role, string username)
     {
         var operatorAccounts = harness.App.Services.GetRequiredService<OperatorAccountService>();
@@ -4584,6 +4674,12 @@ public sealed class GatewayAdminEndpointTests
         var sessions = await harness.Runtime.SessionManager.ListActiveAsync(CancellationToken.None);
         return sessions.FirstOrDefault(session =>
             string.Equals(session.StableSessionBinding?.ExternalSessionId, externalStableSessionId, StringComparison.Ordinal));
+    }
+
+    private static async Task AssertSessionLockReleasedAsync(GatewayTestHarness harness, string sessionId)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await using var sessionLock = await harness.Runtime.SessionManager.AcquireSessionLockAsync(sessionId, cts.Token);
     }
 
     private static void UpdateMax(ref int target, int value)

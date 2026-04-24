@@ -155,6 +155,93 @@ public sealed class ProcessToolTests
     }
 
     [Fact]
+    public void IsIsolatedProcessBackend_AllowsDockerButRejectsUnsafeBackends()
+    {
+        var config = new GatewayConfig
+        {
+            Execution = new ExecutionConfig
+            {
+                DefaultBackend = "local",
+                Profiles = new Dictionary<string, ExecutionBackendProfileConfig>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["local"] = new()
+                    {
+                        Type = ExecutionBackendType.Local
+                    },
+                    ["docker-safe"] = new()
+                    {
+                        Type = ExecutionBackendType.Docker,
+                        Image = "alpine:latest"
+                    }
+                }
+            },
+            Sandbox = new SandboxConfig
+            {
+                Provider = SandboxProviderNames.OpenSandbox,
+                Endpoint = "http://sandbox.example"
+            }
+        };
+
+        var router = new ToolExecutionRouter(
+            config,
+            toolSandbox: Substitute.For<IToolSandbox>(),
+            NullLoggerFactory.Instance.CreateLogger<ToolExecutionRouter>());
+
+        Assert.True(router.IsIsolatedProcessBackend("docker-safe"));
+        Assert.False(router.IsIsolatedProcessBackend("local"));
+        Assert.False(router.IsIsolatedProcessBackend("opensandbox"));
+    }
+
+    [Fact]
+    public async Task ExecutionProcessService_StartAsync_RejectsOpenSandboxBackgroundProcesses()
+    {
+        var workspace = Path.Combine(Path.GetTempPath(), "openclaw-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workspace);
+
+        var config = new GatewayConfig
+        {
+            Tooling = new ToolingConfig
+            {
+                WorkspaceRoot = workspace
+            },
+            Sandbox = new SandboxConfig
+            {
+                Provider = SandboxProviderNames.OpenSandbox,
+                Endpoint = "http://sandbox.example",
+                Tools = new Dictionary<string, SandboxToolConfig>(StringComparer.Ordinal)
+                {
+                    ["process"] = new()
+                    {
+                        Mode = nameof(ToolSandboxMode.Prefer)
+                    }
+                }
+            }
+        };
+
+        var router = new ToolExecutionRouter(
+            config,
+            toolSandbox: Substitute.For<IToolSandbox>(),
+            NullLoggerFactory.Instance.CreateLogger<ToolExecutionRouter>());
+        await using var processes = new ExecutionProcessService(router, NullLogger<ExecutionProcessService>.Instance);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => processes.StartAsync(new ExecutionProcessStartRequest
+        {
+            ToolName = "process",
+            BackendName = "",
+            OwnerSessionId = "sess_owner",
+            OwnerChannelId = "websocket",
+            OwnerSenderId = "user1",
+            Command = "echo",
+            Arguments = ["hello"],
+            WorkingDirectory = workspace,
+            TimeoutSeconds = 10,
+            RequireWorkspace = true
+        }, CancellationToken.None));
+
+        Assert.Contains("does not support long-running background processes", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ExecutionProcessService_RetainsBoundedCompletedHistory()
     {
         var workspace = Path.Combine(Path.GetTempPath(), "openclaw-tests", Guid.NewGuid().ToString("N"));

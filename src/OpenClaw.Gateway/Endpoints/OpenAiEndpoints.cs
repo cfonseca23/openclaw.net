@@ -83,68 +83,67 @@ internal static class OpenAiEndpoints
                 : await runtime.SessionManager.GetOrCreateAsync("openai-http", requestId, ctx.RequestAborted);
             IAsyncDisposable? stableSessionLock = null;
             var discardStableSessionOnExit = false;
-
-            if (stableBinding is not null)
-            {
-                stableSessionLock = await runtime.SessionManager.AcquireSessionLockAsync(session.Id, ctx.RequestAborted);
-                if (!TryEnsureStableSessionBinding(session, stableBinding, out var bindingError))
-                {
-                    ctx.Response.StatusCode = StatusCodes.Status409Conflict;
-                    await ctx.Response.WriteAsync(bindingError ?? "Stable session binding is inconsistent with the current requester scope.", ctx.RequestAborted);
-                    return;
-                }
-            }
-
-            var httpMwCtx = new MessageContext
-            {
-                ChannelId = "openai-http",
-                SenderId = requesterKey,
-                SessionId = session.Id,
-                Text = userText ?? "",
-                SessionInputTokens = session.TotalInputTokens,
-                SessionOutputTokens = session.TotalOutputTokens
-            };
-            var allow = await runtime.MiddlewarePipeline.ExecuteAsync(httpMwCtx, ctx.RequestAborted);
-            if (!allow)
-            {
-                ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-                await ctx.Response.WriteAsync(httpMwCtx.ShortCircuitResponse ?? "Request blocked.", ctx.RequestAborted);
-                if (string.IsNullOrWhiteSpace(stableSessionId))
-                    runtime.SessionManager.RemoveActive(session.Id);
-                return;
-            }
-            if (req.Model is not null)
-            {
-                if (runtime.Operations.ModelProfiles.TryGet(req.Model, out _))
-                {
-                    session.ModelProfileId = req.Model;
-                    session.ModelOverride = null;
-                }
-                else
-                {
-                    session.ModelOverride = req.Model;
-                    session.ModelProfileId = null;
-                }
-            }
-            var presetHeader = ctx.Request.Headers.TryGetValue("X-OpenClaw-Preset", out var presetValues)
-                ? presetValues.ToString()
-                : null;
-            if (!string.IsNullOrWhiteSpace(presetHeader))
-            {
-                runtime.Operations.SessionMetadata.Set(session.Id, new SessionMetadataUpdateRequest
-                {
-                    ActivePresetId = presetHeader.Trim()
-                });
-            }
-            var approvalCallback = ToolApprovalCallbackFactory.Create(
-                startup.Config,
-                runtime,
-                session,
-                approvalChannelId: "openai-http",
-                senderId: requesterKey);
+            ToolApprovalCallback? approvalCallback = null;
 
             try
             {
+                if (stableBinding is not null)
+                {
+                    stableSessionLock = await runtime.SessionManager.AcquireSessionLockAsync(session.Id, ctx.RequestAborted);
+                    if (!TryEnsureStableSessionBinding(session, stableBinding, out var bindingError))
+                    {
+                        ctx.Response.StatusCode = StatusCodes.Status409Conflict;
+                        await ctx.Response.WriteAsync(bindingError ?? "Stable session binding is inconsistent with the current requester scope.", ctx.RequestAborted);
+                        return;
+                    }
+                }
+
+                var httpMwCtx = new MessageContext
+                {
+                    ChannelId = "openai-http",
+                    SenderId = requesterKey,
+                    SessionId = session.Id,
+                    Text = userText ?? "",
+                    SessionInputTokens = session.TotalInputTokens,
+                    SessionOutputTokens = session.TotalOutputTokens
+                };
+                var allow = await runtime.MiddlewarePipeline.ExecuteAsync(httpMwCtx, ctx.RequestAborted);
+                if (!allow)
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                    await ctx.Response.WriteAsync(httpMwCtx.ShortCircuitResponse ?? "Request blocked.", ctx.RequestAborted);
+                    return;
+                }
+                if (req.Model is not null)
+                {
+                    if (runtime.Operations.ModelProfiles.TryGet(req.Model, out _))
+                    {
+                        session.ModelProfileId = req.Model;
+                        session.ModelOverride = null;
+                    }
+                    else
+                    {
+                        session.ModelOverride = req.Model;
+                        session.ModelProfileId = null;
+                    }
+                }
+                var presetHeader = ctx.Request.Headers.TryGetValue("X-OpenClaw-Preset", out var presetValues)
+                    ? presetValues.ToString()
+                    : null;
+                if (!string.IsNullOrWhiteSpace(presetHeader))
+                {
+                    runtime.Operations.SessionMetadata.Set(session.Id, new SessionMetadataUpdateRequest
+                    {
+                        ActivePresetId = presetHeader.Trim()
+                    });
+                }
+                approvalCallback = ToolApprovalCallbackFactory.Create(
+                    startup.Config,
+                    runtime,
+                    session,
+                    approvalChannelId: "openai-http",
+                    senderId: requesterKey);
+
                 if (ShouldHydrateRequestHistory(stableSessionId, session))
                 {
                     var lastUserIndex = req.Messages.FindLastIndex(m =>
@@ -436,68 +435,67 @@ internal static class OpenAiEndpoints
                 : await runtime.SessionManager.GetOrCreateAsync("openai-responses", requestId, ctx.RequestAborted);
             IAsyncDisposable? stableSessionLock = null;
             var discardStableSessionOnExit = false;
-
-            if (stableBinding is not null)
-            {
-                stableSessionLock = await runtime.SessionManager.AcquireSessionLockAsync(session.Id, ctx.RequestAborted);
-                if (!TryEnsureStableSessionBinding(session, stableBinding, out var bindingError))
-                {
-                    ctx.Response.StatusCode = StatusCodes.Status409Conflict;
-                    await ctx.Response.WriteAsync(bindingError ?? "Stable session binding is inconsistent with the current requester scope.", ctx.RequestAborted);
-                    return;
-                }
-            }
-
-            var httpMwCtx = new MessageContext
-            {
-                ChannelId = "openai-responses",
-                SenderId = requesterKey,
-                SessionId = session.Id,
-                Text = req.Input,
-                SessionInputTokens = session.TotalInputTokens,
-                SessionOutputTokens = session.TotalOutputTokens
-            };
-            var allow = await runtime.MiddlewarePipeline.ExecuteAsync(httpMwCtx, ctx.RequestAborted);
-            if (!allow)
-            {
-                ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-                await ctx.Response.WriteAsync(httpMwCtx.ShortCircuitResponse ?? "Request blocked.", ctx.RequestAborted);
-                if (string.IsNullOrWhiteSpace(stableSessionId))
-                    runtime.SessionManager.RemoveActive(session.Id);
-                return;
-            }
-            if (req.Model is not null)
-            {
-                if (runtime.Operations.ModelProfiles.TryGet(req.Model, out _))
-                {
-                    session.ModelProfileId = req.Model;
-                    session.ModelOverride = null;
-                }
-                else
-                {
-                    session.ModelOverride = req.Model;
-                    session.ModelProfileId = null;
-                }
-            }
-            var responsesPresetHeader = ctx.Request.Headers.TryGetValue("X-OpenClaw-Preset", out var responsesPresetValues)
-                ? responsesPresetValues.ToString()
-                : null;
-            if (!string.IsNullOrWhiteSpace(responsesPresetHeader))
-            {
-                runtime.Operations.SessionMetadata.Set(session.Id, new SessionMetadataUpdateRequest
-                {
-                    ActivePresetId = responsesPresetHeader.Trim()
-                });
-            }
-            var approvalCallback = ToolApprovalCallbackFactory.Create(
-                startup.Config,
-                runtime,
-                session,
-                approvalChannelId: "openai-http",
-                senderId: requesterKey);
+            ToolApprovalCallback? approvalCallback = null;
 
             try
             {
+                if (stableBinding is not null)
+                {
+                    stableSessionLock = await runtime.SessionManager.AcquireSessionLockAsync(session.Id, ctx.RequestAborted);
+                    if (!TryEnsureStableSessionBinding(session, stableBinding, out var bindingError))
+                    {
+                        ctx.Response.StatusCode = StatusCodes.Status409Conflict;
+                        await ctx.Response.WriteAsync(bindingError ?? "Stable session binding is inconsistent with the current requester scope.", ctx.RequestAborted);
+                        return;
+                    }
+                }
+
+                var httpMwCtx = new MessageContext
+                {
+                    ChannelId = "openai-responses",
+                    SenderId = requesterKey,
+                    SessionId = session.Id,
+                    Text = req.Input,
+                    SessionInputTokens = session.TotalInputTokens,
+                    SessionOutputTokens = session.TotalOutputTokens
+                };
+                var allow = await runtime.MiddlewarePipeline.ExecuteAsync(httpMwCtx, ctx.RequestAborted);
+                if (!allow)
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                    await ctx.Response.WriteAsync(httpMwCtx.ShortCircuitResponse ?? "Request blocked.", ctx.RequestAborted);
+                    return;
+                }
+                if (req.Model is not null)
+                {
+                    if (runtime.Operations.ModelProfiles.TryGet(req.Model, out _))
+                    {
+                        session.ModelProfileId = req.Model;
+                        session.ModelOverride = null;
+                    }
+                    else
+                    {
+                        session.ModelOverride = req.Model;
+                        session.ModelProfileId = null;
+                    }
+                }
+                var responsesPresetHeader = ctx.Request.Headers.TryGetValue("X-OpenClaw-Preset", out var responsesPresetValues)
+                    ? responsesPresetValues.ToString()
+                    : null;
+                if (!string.IsNullOrWhiteSpace(responsesPresetHeader))
+                {
+                    runtime.Operations.SessionMetadata.Set(session.Id, new SessionMetadataUpdateRequest
+                    {
+                        ActivePresetId = responsesPresetHeader.Trim()
+                    });
+                }
+                approvalCallback = ToolApprovalCallbackFactory.Create(
+                    startup.Config,
+                    runtime,
+                    session,
+                    approvalChannelId: "openai-http",
+                    senderId: requesterKey);
+
                 var responseId = $"resp-{Guid.NewGuid():N}"[..24];
                 var createdAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var model = req.Model ?? startup.Config.Llm.Model;
