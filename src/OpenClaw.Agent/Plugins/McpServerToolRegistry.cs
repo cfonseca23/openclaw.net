@@ -13,13 +13,15 @@ namespace OpenClaw.Agent.Plugins;
 /// <summary>
 /// Discovers tools from configured MCP servers and registers them as native OpenClaw tools.
 /// </summary>
-public sealed class McpServerToolRegistry : IDisposable
+public sealed class McpServerToolRegistry : IDisposable, IAsyncDisposable
 {
     private readonly McpPluginsConfig _config;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _loadSemaphore = new(1, 1);
+    private readonly object _disposeGate = new();
     private readonly List<DiscoveredMcpTool> _tools = [];
     private readonly List<McpClient> _clients = [];
+    private Task? _disposeTask;
     private bool _loaded;
     private bool _registered;
     private bool _disposed;
@@ -125,7 +127,7 @@ public sealed class McpServerToolRegistry : IDisposable
             {
                 try
                 {
-                    DisposeClient(client);
+                    await DisposeClientAsync(client);
                 }
                 catch
                 {
@@ -203,46 +205,21 @@ public sealed class McpServerToolRegistry : IDisposable
 
     public void Dispose()
     {
-        bool acquired = false;
-        try
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
+        GC.SuppressFinalize(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Task disposeTask;
+        lock (_disposeGate)
         {
-            acquired = _loadSemaphore.Wait(TimeSpan.FromSeconds(5));
-            if (!acquired)
-            {
-                _logger.LogWarning("McpServerToolRegistry.Dispose() timed out waiting for load semaphore, waiting indefinitely to ensure load completes");
-                _loadSemaphore.Wait();
-                acquired = true;
-            }
-        }
-        catch (ObjectDisposedException)
-        {
-            _logger.LogWarning("McpServerToolRegistry.Dispose() encountered disposed semaphore, load may have completed concurrently");
-            return;
+            _disposeTask ??= DisposeCoreAsync();
+            disposeTask = _disposeTask;
         }
 
-        try
-        {
-            if (_disposed)
-                return;
-
-            _disposed = true;
-            foreach (var client in _clients)
-            {
-                try
-                {
-                    DisposeClient(client);
-                }
-                catch
-                {
-                }
-            }
-            _clients.Clear();
-        }
-        finally
-        {
-            if (acquired)
-                _loadSemaphore.Release();
-        }
+        await disposeTask.ConfigureAwait(false);
+        GC.SuppressFinalize(this);
     }
 
     private static IClientTransport CreateTransport(string serverId, McpServerConfig config)
@@ -318,11 +295,43 @@ public sealed class McpServerToolRegistry : IDisposable
             throw new ObjectDisposedException(nameof(McpServerToolRegistry));
     }
 
-    private static void DisposeClient(McpClient client)
+    private async Task DisposeCoreAsync()
+    {
+        List<McpClient> clients;
+
+        await _loadSemaphore.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            clients = [.. _clients];
+            _clients.Clear();
+            _tools.Clear();
+        }
+        finally
+        {
+            _loadSemaphore.Release();
+        }
+
+        foreach (var client in clients)
+        {
+            try
+            {
+                await DisposeClientAsync(client).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static async ValueTask DisposeClientAsync(McpClient client)
     {
         if (client is IAsyncDisposable asyncDisposable)
         {
-            asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            await asyncDisposable.DisposeAsync().ConfigureAwait(false);
             return;
         }
 

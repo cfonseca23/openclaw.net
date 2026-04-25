@@ -18,15 +18,19 @@ The gateway startup path is now split into three layers:
    - Preserves the existing Core/Agent runtime model as the single source of truth for AOT vs JIT.
    - Builds runtime-only objects after `builder.Build()` in `InitializeOpenClawRuntimeAsync(...)`.
    - Runtime assembly is now staged as:
+     - strict public-bind preset application
      - service resolution
      - channel/webhook composition
-     - plugin/runtime extension loading
-     - agent runtime assembly
+     - built-in provider and tool registration
+     - plugin loading and composition
+     - agent runtime creation
+     - skill watcher and automation refresh
      - final `GatewayAppRuntime` construction
+     - profile hook and integration startup
    - Keeps plugin loading, provider registration, skill loading, hooks, and worker startup order intact.
 
 3. `Pipeline/` and `Endpoints/`
-   - Applies forwarded headers, CORS, WebSockets, worker startup, channel startup, and shutdown handling.
+   - Applies forwarded headers, CORS, WebSockets, worker startup, channel startup, and async shutdown coordination.
    - Prints the terminal-ready startup banner, startup notices, and post-ready local save/browser prompts.
    - Maps all HTTP/WebSocket routes outside `Program.cs`.
 
@@ -48,17 +52,23 @@ The gateway profile layer does not replace plugin/runtime capability enforcement
   - config loading, validation, runtime-state resolution, and early exits
 - `Composition/*`
   - grouped DI registration and post-build runtime assembly
+- `Composition/RuntimeInitializationExtensions*.cs`
+  - thin orchestration plus extracted runtime composition and factory stages
 - `Profiles/*`
   - thin gateway composition hooks keyed off the already-resolved effective runtime mode
 - `Pipeline/PipelineExtensions.cs`
-  - middleware, channel startup, workers, and shutdown
+  - middleware, channel startup, workers, and shutdown wiring
+- `Pipeline/GatewayRuntimeShutdownCoordinator.cs`
+  - owns ordered async cleanup for runtime-created resources and integrations
 - `Endpoints/*`
   - grouped route mapping by diagnostics, OpenAI surface, UI/control, WebSocket, and webhook boundaries
+  - large admin and OpenAI surfaces are further decomposed into thin mappers plus domain-specific partial files
 
 ## Adding New Startup Behavior
 
 - Add config/bootstrap rules in `Bootstrap/` when behavior must happen before `builder.Build()`.
 - Add DI-friendly services in the appropriate `Composition/*ServicesExtensions.cs` file.
 - Add runtime-only initialization in the relevant `InitializeOpenClawRuntimeAsync(...)` stage helper if it depends on built services, app lifetime, plugin loading, or runtime ordering.
+- Register runtime-owned cleanup with the shutdown coordinator instead of blocking synchronous lifetime callbacks.
 - Add new route handlers in the relevant `Endpoints/*` module and register them through `MapOpenClawEndpoints(...)`.
 - Add profile-specific gateway composition only in `Profiles/*`; do not duplicate runtime-mode or plugin capability policy there.

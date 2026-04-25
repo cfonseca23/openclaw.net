@@ -127,6 +127,21 @@ public sealed class TeamsWebhookHandlerTests
     }
 
     [Fact]
+    public async Task BotFrameworkTokenValidator_DisposeAsync_DoesNotDisposeSuppliedHttpClient()
+    {
+        var handler = new TrackingDisposeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        var client = new HttpClient(handler);
+        var validator = new BotFrameworkTokenValidator("teams-app-id", client, NullLogger.Instance);
+
+        await validator.DisposeAsync();
+
+        Assert.False(handler.Disposed);
+
+        client.Dispose();
+        Assert.True(handler.Disposed);
+    }
+
+    [Fact]
     public async Task HandleAsync_GroupAllowlistUsesTeamIdFromChannelData()
     {
         var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-teams-tests", Guid.NewGuid().ToString("N"));
@@ -258,6 +273,23 @@ public sealed class TeamsWebhookHandlerTests
         {
             _ = cancellationToken;
             return Task.FromResult(handler(request));
+        }
+    }
+
+    private sealed class TrackingDisposeHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        public bool Disposed { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _ = cancellationToken;
+            return Task.FromResult(handler(request));
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
         }
     }
 }

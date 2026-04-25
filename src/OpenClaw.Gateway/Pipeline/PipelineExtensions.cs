@@ -33,7 +33,6 @@ internal static class PipelineExtensions
 
         StartWorkers(app, startup, runtime);
         StartChannels(app, runtime);
-        RegisterShutdown(app, startup, runtime);
         StartupReadyReporter.Register(app, startup, launchOptions, localSession, stateStore);
     }
 
@@ -161,79 +160,6 @@ internal static class PipelineExtensions
                     app.Logger.LogError(ex, "Channel adapter {ChannelId} stopped unexpectedly", adapter.ChannelId);
                 }
             }, CancellationToken.None);
-        }
-    }
-
-    private static void RegisterShutdown(WebApplication app, GatewayStartupContext startup, GatewayAppRuntime runtime)
-    {
-        var drainCompleteEvent = new ManualResetEventSlim(false);
-        var pluginDisposeTimeout = TimeSpan.FromSeconds(Math.Max(startup.Config.GracefulShutdownSeconds, 10));
-
-        app.Lifetime.ApplicationStopping.Register(() =>
-        {
-            app.Logger.LogInformation(
-                "Shutdown signal received — draining in-flight requests ({Timeout}s timeout)…",
-                startup.Config.GracefulShutdownSeconds);
-
-            if (startup.Config.GracefulShutdownSeconds > 0)
-            {
-                var deadline = DateTimeOffset.UtcNow.AddSeconds(startup.Config.GracefulShutdownSeconds);
-                var checkInterval = TimeSpan.FromMilliseconds(100);
-
-                while (DateTimeOffset.UtcNow < deadline)
-                {
-                    var allFree = true;
-                    foreach (var kvp in runtime.SessionLocks)
-                    {
-                        if (kvp.Value.CurrentCount == 0)
-                        {
-                            allFree = false;
-                            break;
-                        }
-                    }
-
-                    if (allFree)
-                    {
-                        drainCompleteEvent.Set();
-                        break;
-                    }
-
-                    var remaining = deadline - DateTimeOffset.UtcNow;
-                    if (remaining > TimeSpan.Zero)
-                        drainCompleteEvent.Wait(checkInterval < remaining ? checkInterval : remaining);
-                }
-
-                app.Logger.LogInformation("Drain complete — shutting down");
-            }
-
-            GatewayWorkers.DisposeSessionLocks(runtime.SessionLocks, app.Logger);
-            DisposePluginHostWithTimeout(runtime.PluginHost, pluginDisposeTimeout, app.Logger);
-            DisposePluginHostWithTimeout(runtime.NativeDynamicPluginHost, pluginDisposeTimeout, app.Logger);
-            DisposePluginHostWithTimeout(runtime.WhatsAppWorkerHost, pluginDisposeTimeout, app.Logger);
-            foreach (var ownerId in runtime.DynamicProviderOwners)
-            {
-                runtime.Operations.ProviderRegistry.UnregisterOwnedBy(ownerId);
-                LlmClientFactory.UnregisterProvidersOwnedBy(ownerId);
-            }
-            runtime.NativeRegistry.Dispose();
-            runtime.SkillWatcher.Dispose();
-            drainCompleteEvent.Dispose();
-        });
-    }
-
-    private static void DisposePluginHostWithTimeout(IAsyncDisposable? host, TimeSpan timeout, ILogger logger)
-    {
-        if (host is null)
-            return;
-
-        try
-        {
-            if (!host.DisposeAsync().AsTask().Wait(timeout))
-                logger.LogWarning("Plugin host disposal timed out after {Seconds}s", timeout.TotalSeconds);
-        }
-        catch (AggregateException ex)
-        {
-            logger.LogWarning(ex.InnerException, "Plugin host disposal threw an exception");
         }
     }
 

@@ -22,14 +22,17 @@ internal sealed class BotFrameworkTokenValidator : ITeamsTokenValidator, IAsyncD
 
     private readonly string _appId;
     private readonly HttpClient _http;
+    private readonly bool _ownsHttpClient;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _metadataGate = new(1, 1);
 
     private SigningKeysSnapshot? _snapshot;
+    private int _disposeState;
 
     public BotFrameworkTokenValidator(string appId, HttpClient? httpClient = null, ILogger? logger = null)
     {
         _appId = appId;
+        _ownsHttpClient = httpClient is null;
         _http = httpClient ?? HttpClientFactory.Create();
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     }
@@ -132,7 +135,11 @@ internal sealed class BotFrameworkTokenValidator : ITeamsTokenValidator, IAsyncD
 
     public ValueTask DisposeAsync()
     {
-        _http.Dispose();
+        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
+            return ValueTask.CompletedTask;
+
+        if (_ownsHttpClient)
+            _http.Dispose();
         _metadataGate.Dispose();
         return ValueTask.CompletedTask;
     }

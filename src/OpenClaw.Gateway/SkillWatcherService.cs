@@ -1,20 +1,26 @@
 using OpenClaw.Agent;
 using OpenClaw.Core.Skills;
+using System.Threading.Channels;
 
 namespace OpenClaw.Gateway;
 
-internal sealed class SkillWatcherService : IDisposable
+internal sealed class SkillWatcherService : IAsyncDisposable, IDisposable
 {
     private readonly IAgentRuntime _agentRuntime;
     private readonly ILogger<SkillWatcherService> _logger;
+    private readonly Channel<byte> _reloadRequests = Channel.CreateUnbounded<byte>(new UnboundedChannelOptions
+    {
+        SingleReader = true,
+        SingleWriter = false
+    });
     private readonly List<FileSystemWatcher> _watchers = [];
     private readonly object _gate = new();
     private readonly string[] _watchRoots;
-    private Timer? _debounceTimer;
+    private CancellationTokenSource? _reloadLoopCts;
+    private Task? _reloadLoopTask;
     private CancellationToken _stoppingToken;
     private bool _started;
     private bool _disposed;
-    private int _reloadInProgress;
 
     public SkillWatcherService(
         SkillsConfig config,
@@ -32,11 +38,17 @@ internal sealed class SkillWatcherService : IDisposable
 
     public void Start(CancellationToken stoppingToken)
     {
-        if (_started)
-            return;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_started)
+                return;
 
-        _started = true;
-        _stoppingToken = stoppingToken;
+            _started = true;
+            _stoppingToken = stoppingToken;
+            _reloadLoopCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            _reloadLoopTask = RunReloadLoopAsync(_reloadLoopCts.Token);
+        }
 
         foreach (var root in _watchRoots)
         {
@@ -73,24 +85,33 @@ internal sealed class SkillWatcherService : IDisposable
             return;
         }
 
-        stoppingToken.Register(Dispose);
         _logger.LogInformation("Watching {Count} skill directories for SKILL.md changes.", _watchers.Count);
     }
 
     public void Dispose()
-    {
-        if (_disposed)
-            return;
+        => DisposeAsync().AsTask().GetAwaiter().GetResult();
 
-        _disposed = true;
+    public async ValueTask DisposeAsync()
+    {
+        FileSystemWatcher[] watchers;
+        CancellationTokenSource? reloadLoopCts;
+        Task? reloadLoopTask;
 
         lock (_gate)
         {
-            _debounceTimer?.Dispose();
-            _debounceTimer = null;
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            watchers = [.. _watchers];
+            _watchers.Clear();
+            reloadLoopCts = _reloadLoopCts;
+            _reloadLoopCts = null;
+            reloadLoopTask = _reloadLoopTask;
+            _reloadLoopTask = null;
         }
 
-        foreach (var watcher in _watchers)
+        foreach (var watcher in watchers)
         {
             watcher.EnableRaisingEvents = false;
             watcher.Changed -= OnWatcherChanged;
@@ -100,7 +121,21 @@ internal sealed class SkillWatcherService : IDisposable
             watcher.Dispose();
         }
 
-        _watchers.Clear();
+        _reloadRequests.Writer.TryComplete();
+        reloadLoopCts?.Cancel();
+
+        if (reloadLoopTask is not null)
+        {
+            try
+            {
+                await reloadLoopTask;
+            }
+            catch (OperationCanceledException) when (reloadLoopCts?.IsCancellationRequested == true)
+            {
+            }
+        }
+
+        reloadLoopCts?.Dispose();
     }
 
     private static IEnumerable<string> GetWatchRoots(
@@ -142,41 +177,76 @@ internal sealed class SkillWatcherService : IDisposable
 
     private void OnWatcherRenamed(object sender, RenamedEventArgs e) => ScheduleReload();
 
+    internal void NotifySkillChanged() => ScheduleReload();
+
     private void ScheduleReload()
     {
-        if (_disposed || _stoppingToken.IsCancellationRequested)
-            return;
-
         lock (_gate)
         {
-            _debounceTimer ??= new Timer(_ => _ = TriggerReloadAsync(), null, Timeout.Infinite, Timeout.Infinite);
-            _debounceTimer.Change(TimeSpan.FromMilliseconds(500), Timeout.InfiniteTimeSpan);
+            if (_disposed || !_started || _stoppingToken.IsCancellationRequested)
+                return;
+        }
+
+        _reloadRequests.Writer.TryWrite(0);
+    }
+
+    private async Task RunReloadLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (await _reloadRequests.Reader.WaitToReadAsync(ct))
+            {
+                while (_reloadRequests.Reader.TryRead(out _))
+                {
+                }
+
+                await WaitForQuietPeriodAsync(ct);
+                await TriggerReloadAsync();
+            }
+        }
+        catch (ChannelClosedException)
+        {
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task WaitForQuietPeriodAsync(CancellationToken ct)
+    {
+        while (true)
+        {
+            var quietPeriodTask = Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+            var signalTask = _reloadRequests.Reader.WaitToReadAsync(ct).AsTask();
+            var completedTask = await Task.WhenAny(quietPeriodTask, signalTask);
+            if (completedTask == quietPeriodTask)
+                return;
+
+            if (!await signalTask)
+                return;
+
+            while (_reloadRequests.Reader.TryRead(out _))
+            {
+            }
         }
     }
 
     private async Task TriggerReloadAsync()
     {
-        if (_disposed || _stoppingToken.IsCancellationRequested)
-            return;
-
-        if (Interlocked.Exchange(ref _reloadInProgress, 1) == 1)
-            return;
+        lock (_gate)
+        {
+            if (_disposed || _stoppingToken.IsCancellationRequested)
+                return;
+        }
 
         try
         {
-            var loadedSkillNames = await _agentRuntime.ReloadSkillsAsync(_stoppingToken);
+            var loadedSkillNames = await _agentRuntime.ReloadSkillsAsync(CancellationToken.None);
             _logger.LogInformation("Reloaded {Count} skills after file change.", loadedSkillNames.Count);
-        }
-        catch (OperationCanceledException) when (_stoppingToken.IsCancellationRequested)
-        {
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to reload skills after file change.");
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _reloadInProgress, 0);
         }
     }
 }
