@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Core.Models;
@@ -36,7 +37,7 @@ internal sealed class WebhookDeliveryStore
         try
         {
             Directory.CreateDirectory(_deadLetterPath);
-            var path = Path.Combine(_deadLetterPath, $"{record.Entry.Id}.json");
+            var path = GetDeadLetterPath(record.Entry.Id);
             var json = JsonSerializer.Serialize(record, CoreJsonContext.Default.WebhookDeadLetterRecord);
             File.WriteAllText(path, json);
         }
@@ -72,7 +73,7 @@ internal sealed class WebhookDeliveryStore
 
     public WebhookDeadLetterRecord? Get(string id)
     {
-        var path = Path.Combine(_deadLetterPath, $"{id}.json");
+        var path = GetDeadLetterPath(id);
         if (!File.Exists(path))
             return null;
 
@@ -166,4 +167,16 @@ internal sealed class WebhookDeliveryStore
 
     private static string BuildSeenKey(string source, string deliveryKey)
         => $"{source}:{deliveryKey}";
+
+    private string GetDeadLetterPath(string id)
+        => Path.Combine(_deadLetterPath, $"{EncodeFileSegment(id)}.json");
+
+    private static string EncodeFileSegment(string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        return Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
 }
