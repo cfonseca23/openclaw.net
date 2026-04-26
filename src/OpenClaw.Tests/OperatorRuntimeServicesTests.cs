@@ -87,6 +87,55 @@ public sealed class OperatorRuntimeServicesTests
     }
 
     [Fact]
+    public void WebhookDeliveryStore_EncodesDeadLetterIds_BeforeBuildingPaths()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-ops-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+        try
+        {
+            var store = new WebhookDeliveryStore(storagePath, NullLogger<WebhookDeliveryStore>.Instance);
+            var escapedCandidate = Path.GetFullPath(Path.Combine(storagePath, "..", "escaped-dead-letter.json"));
+
+            store.RecordDeadLetter(new WebhookDeadLetterRecord
+            {
+                Entry = new WebhookDeadLetterEntry
+                {
+                    Id = "../escaped-dead-letter",
+                    Source = "telegram",
+                    DeliveryKey = "update-2",
+                    Error = "boom",
+                    PayloadPreview = "{}"
+                },
+                ReplayMessage = new InboundMessage
+                {
+                    ChannelId = "telegram",
+                    SenderId = "user1",
+                    Text = "hello"
+                }
+            });
+
+            Assert.False(File.Exists(escapedCandidate));
+            var item = Assert.Single(store.List());
+            Assert.Equal("../escaped-dead-letter", item.Id);
+            Assert.NotNull(store.Get("../escaped-dead-letter"));
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(storagePath))
+                    Directory.Delete(storagePath, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    [Fact]
     public void ActorRateLimitService_TryConsume_EnforcesConfiguredWindow()
     {
         var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-ops-tests", Guid.NewGuid().ToString("N"));

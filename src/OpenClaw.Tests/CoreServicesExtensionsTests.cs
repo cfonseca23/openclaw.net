@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
 using OpenClaw.Gateway;
@@ -92,6 +93,51 @@ public sealed class CoreServicesExtensionsTests
             });
 
             Assert.NotNull(provider.GetRequiredService<GatewayLlmExecutionService>());
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(tempPath);
+        }
+    }
+
+    [Fact]
+    public async Task AddOpenClawCoreServices_RegistersEmbeddingBackfillHostedService()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempPath);
+        try
+        {
+            var config = new GatewayConfig
+            {
+                Memory = new MemoryConfig
+                {
+                    StoragePath = tempPath
+                }
+            };
+            var startup = new GatewayStartupContext
+            {
+                Config = config,
+                RuntimeState = new GatewayRuntimeState
+                {
+                    RequestedMode = "jit",
+                    EffectiveMode = GatewayRuntimeMode.Jit,
+                    DynamicCodeSupported = true
+                },
+                IsNonLoopbackBind = false
+            };
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddOptions();
+            services.AddOpenClawCoreServices(startup);
+
+            await using var provider = services.BuildServiceProvider();
+
+            var backfillService = provider.GetRequiredService<SqliteEmbeddingBackfillService>();
+            var hostedDescriptor = services.Last(static descriptor => descriptor.ServiceType == typeof(IHostedService));
+            var hostedService = Assert.IsAssignableFrom<IHostedService>(hostedDescriptor.ImplementationFactory!(provider));
+
+            Assert.Same(backfillService, hostedService);
         }
         finally
         {

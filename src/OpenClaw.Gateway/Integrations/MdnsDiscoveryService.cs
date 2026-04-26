@@ -23,19 +23,32 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
     private readonly int _gatewayPort;
     private readonly bool _authRequired;
     private readonly ILogger<MdnsDiscoveryService> _logger;
+    private readonly Lock _lifecycleLock = new();
+    private readonly Func<AddressFamily, IPAddress, IPAddress, UdpClient> _listenerFactory;
+    private readonly Func<UdpClient, IPEndPoint, CancellationToken, Task> _listenLoop;
     private readonly Lock _addressCacheLock = new();
     private IReadOnlyList<IPAddress>? _cachedAdvertisedAddresses;
     private DateTimeOffset _cachedAdvertisedAddressesExpiresUtc;
     private CancellationTokenSource? _cts;
     private readonly List<Task> _listenTasks = [];
     private readonly List<UdpClient> _udpClients = [];
+    private bool _started;
+    private bool _disposed;
 
-    public MdnsDiscoveryService(MdnsConfig config, int gatewayPort, bool authRequired, ILogger<MdnsDiscoveryService> logger)
+    public MdnsDiscoveryService(
+        MdnsConfig config,
+        int gatewayPort,
+        bool authRequired,
+        ILogger<MdnsDiscoveryService> logger,
+        Func<AddressFamily, IPAddress, IPAddress, UdpClient>? listenerFactory = null,
+        Func<UdpClient, IPEndPoint, CancellationToken, Task>? listenLoop = null)
     {
         _config = config;
         _gatewayPort = gatewayPort;
         _authRequired = authRequired;
         _logger = logger;
+        _listenerFactory = listenerFactory ?? CreateListenerSocket;
+        _listenLoop = listenLoop ?? ListenLoopAsync;
     }
 
     public void Start(CancellationToken ct)
@@ -43,16 +56,41 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
         if (!_config.Enabled)
             return;
 
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        CancellationTokenSource linkedTokenSource;
+        lock (_lifecycleLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_started)
+                return;
+
+            linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _cts = linkedTokenSource;
+            _started = true;
+        }
 
         var startedFamilies = new List<string>(capacity: 2);
-        TryStartListener(AddressFamily.InterNetwork, MulticastAddressV4, IPAddress.Any, startedFamilies, _cts.Token);
-        TryStartListener(AddressFamily.InterNetworkV6, MulticastAddressV6, IPAddress.IPv6Any, startedFamilies, _cts.Token);
+        var udpClients = new List<UdpClient>(capacity: 2);
+        var listenTasks = new List<Task>(capacity: 2);
+        TryStartListener(AddressFamily.InterNetwork, MulticastAddressV4, IPAddress.Any, startedFamilies, udpClients, listenTasks, linkedTokenSource.Token);
+        TryStartListener(AddressFamily.InterNetworkV6, MulticastAddressV6, IPAddress.IPv6Any, startedFamilies, udpClients, listenTasks, linkedTokenSource.Token);
 
         if (startedFamilies.Count == 0)
         {
+            linkedTokenSource.Cancel();
+            linkedTokenSource.Dispose();
+            lock (_lifecycleLock)
+            {
+                _cts = null;
+                _started = false;
+            }
             _logger.LogWarning("Failed to start mDNS discovery. Service advertisement disabled.");
             return;
+        }
+
+        lock (_lifecycleLock)
+        {
+            _udpClients.AddRange(udpClients);
+            _listenTasks.AddRange(listenTasks);
         }
 
         var instanceName = _config.InstanceName ?? Environment.MachineName;
@@ -65,13 +103,20 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
             string.Join(", ", startedFamilies));
     }
 
-    private void TryStartListener(AddressFamily addressFamily, IPAddress multicastAddress, IPAddress bindAddress, ICollection<string> startedFamilies, CancellationToken ct)
+    private void TryStartListener(
+        AddressFamily addressFamily,
+        IPAddress multicastAddress,
+        IPAddress bindAddress,
+        ICollection<string> startedFamilies,
+        ICollection<UdpClient> udpClients,
+        ICollection<Task> listenTasks,
+        CancellationToken ct)
     {
         try
         {
-            var udp = CreateListenerSocket(addressFamily, multicastAddress, bindAddress);
-            _udpClients.Add(udp);
-            _listenTasks.Add(ListenLoopAsync(udp, new IPEndPoint(multicastAddress, MdnsPort), ct));
+            var udp = _listenerFactory(addressFamily, multicastAddress, bindAddress);
+            udpClients.Add(udp);
+            listenTasks.Add(_listenLoop(udp, new IPEndPoint(multicastAddress, MdnsPort), ct));
             startedFamilies.Add(addressFamily == AddressFamily.InterNetwork ? "IPv4" : "IPv6");
         }
         catch (Exception ex)
@@ -378,16 +423,41 @@ internal sealed class MdnsDiscoveryService : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _cts?.Cancel();
-        if (_listenTasks.Count > 0)
+        CancellationTokenSource? cts;
+        Task[] listenTasks;
+        UdpClient[] udpClients;
+
+        lock (_lifecycleLock)
         {
-            try { await Task.WhenAll(_listenTasks); } catch (OperationCanceledException) { }
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            _started = false;
+            cts = _cts;
+            _cts = null;
+            listenTasks = [.. _listenTasks];
+            _listenTasks.Clear();
+            udpClients = [.. _udpClients];
+            _udpClients.Clear();
         }
 
-        foreach (var udp in _udpClients)
+        cts?.Cancel();
+        if (listenTasks.Length > 0)
+        {
+            try
+            {
+                await Task.WhenAll(listenTasks);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        foreach (var udp in udpClients)
             udp.Dispose();
 
-        _cts?.Dispose();
+        cts?.Dispose();
     }
 
     internal sealed record DnsQuestion(string Name, ushort Type, ushort Class);

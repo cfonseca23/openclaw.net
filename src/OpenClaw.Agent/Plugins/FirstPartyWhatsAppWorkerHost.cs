@@ -18,6 +18,12 @@ public sealed class FirstPartyWhatsAppWorkerHost : IAsyncDisposable
     private readonly PluginBridgeProcess _bridge;
     private readonly ILogger _logger;
     private readonly List<BridgedChannelAdapter> _channels = [];
+    private readonly CancellationTokenSource _disposeCts = new();
+    private readonly object _disposeGate = new();
+    private readonly object _notificationTaskGate = new();
+    private readonly HashSet<Task> _notificationTasks = [];
+    private Task? _disposeTask;
+    private bool _disposed;
 
     public IReadOnlyList<BridgedChannelAdapter> ChannelAdapters => _channels;
 
@@ -37,6 +43,7 @@ public sealed class FirstPartyWhatsAppWorkerHost : IAsyncDisposable
         WhatsAppFirstPartyWorkerConfig config,
         CancellationToken ct)
     {
+        ThrowIfDisposed();
         if (_channels.Count > 0)
             return _channels;
 
@@ -75,17 +82,7 @@ public sealed class FirstPartyWhatsAppWorkerHost : IAsyncDisposable
             switch (notification.Notification)
             {
                 case "channel_message":
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await target.HandleInboundAsync(payload, CancellationToken.None);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to handle inbound worker message for '{ChannelId}'", channelId);
-                        }
-                    });
+                    DispatchInboundNotification(target, payload.Clone(), channelId);
                     break;
                 case "channel_auth_event":
                     try
@@ -278,5 +275,95 @@ public sealed class FirstPartyWhatsAppWorkerHost : IAsyncDisposable
         };
     }
 
-    public ValueTask DisposeAsync() => _bridge.DisposeAsync();
+    private async Task HandleInboundNotificationAsync(BridgedChannelAdapter target, JsonElement payload, string channelId)
+    {
+        try
+        {
+            await target.HandleInboundAsync(payload, _disposeCts.Token);
+        }
+        catch (OperationCanceledException) when (_disposeCts.IsCancellationRequested)
+        {
+            // Shutdown path.
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to handle inbound worker message for '{ChannelId}'", channelId);
+        }
+    }
+
+    private void DispatchInboundNotification(BridgedChannelAdapter target, JsonElement payload, string channelId)
+    {
+        Task task;
+        lock (_notificationTaskGate)
+        {
+            if (_disposed)
+                return;
+
+            task = HandleInboundNotificationAsync(target, payload, channelId);
+            _notificationTasks.Add(task);
+        }
+
+        _ = task.ContinueWith(
+            completed =>
+            {
+                lock (_notificationTaskGate)
+                {
+                    _notificationTasks.Remove(completed);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (_disposeGate)
+        {
+            _disposeTask ??= DisposeCoreAsync();
+            return new ValueTask(_disposeTask);
+        }
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _disposeCts.Cancel();
+        _bridge.SetNotificationHandler(_ => { });
+
+        Task[] pending;
+        lock (_notificationTaskGate)
+        {
+            pending = [.. _notificationTasks];
+        }
+
+        if (pending.Length > 0)
+        {
+            try
+            {
+                await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (_disposeCts.IsCancellationRequested)
+            {
+                // Shutdown path.
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("Timed out waiting for first-party WhatsApp worker notification tasks to finish.");
+            }
+        }
+
+        _channels.Clear();
+        _disposeCts.Dispose();
+        await _bridge.DisposeAsync();
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(FirstPartyWhatsAppWorkerHost));
+    }
 }
