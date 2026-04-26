@@ -69,6 +69,37 @@ public sealed class GatewayRuntimeLifecycleTests
     }
 
     [Fact]
+    public async Task GatewayRuntimeShutdownCoordinator_StopAsync_RespectsHostCancellationDuringDrain()
+    {
+        var root = CreateTempRoot();
+        Directory.CreateDirectory(root);
+        try
+        {
+            var config = CreateConfig(root);
+            config.GracefulShutdownSeconds = 30;
+            var startup = new GatewayStartupContext
+            {
+                Config = config,
+                RuntimeState = RuntimeModeResolver.Resolve(config.Runtime, dynamicCodeSupported: true),
+                IsNonLoopbackBind = false
+            };
+            var runtime = CreateRuntime(config, root);
+            var heldLock = new SemaphoreSlim(0, 1);
+            runtime.SessionLocks["held"] = heldLock;
+
+            var coordinator = new GatewayRuntimeShutdownCoordinator(NullLogger<GatewayRuntimeShutdownCoordinator>.Instance);
+            coordinator.AttachRuntime(startup, runtime);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => coordinator.StopAsync(cts.Token));
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(root);
+        }
+    }
+
+    [Fact]
     public async Task SkillWatcherService_DisposeAsync_WaitsForInFlightReload()
     {
         var root = CreateTempRoot();
@@ -103,6 +134,51 @@ public sealed class GatewayRuntimeLifecycleTests
 
             releaseReload.SetResult([]);
             await disposeTask.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(root);
+        }
+    }
+
+    [Fact]
+    public async Task SkillWatcherService_HostStoppingToken_CancelsReloadToken()
+    {
+        var root = CreateTempRoot();
+        Directory.CreateDirectory(root);
+        try
+        {
+            var skillsRoot = Path.Combine(root, "skills");
+            Directory.CreateDirectory(skillsRoot);
+
+            var config = new SkillsConfig();
+            config.Load.ExtraDirs = [skillsRoot];
+
+            var reloadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var reloadCanceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            CancellationToken capturedToken = default;
+
+            var agentRuntime = Substitute.For<IAgentRuntime>();
+            agentRuntime.CircuitBreakerState.Returns(CircuitState.Closed);
+            agentRuntime.LoadedSkillNames.Returns([]);
+            agentRuntime.ReloadSkillsAsync(Arg.Any<CancellationToken>()).Returns(callInfo =>
+            {
+                capturedToken = callInfo.Arg<CancellationToken>();
+                reloadStarted.TrySetResult();
+                return WaitForCancellationAsync(capturedToken, reloadCanceled);
+            });
+
+            using var stoppingCts = new CancellationTokenSource();
+            var service = new SkillWatcherService(config, null, [], agentRuntime, NullLogger<SkillWatcherService>.Instance);
+            service.Start(stoppingCts.Token);
+            service.NotifySkillChanged();
+
+            await reloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(capturedToken.CanBeCanceled && capturedToken.IsCancellationRequested);
+
+            stoppingCts.Cancel();
+            await reloadCanceled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await service.DisposeAsync();
         }
         finally
         {
@@ -318,6 +394,22 @@ public sealed class GatewayRuntimeLifecycleTests
 
     private static string CreateTempRoot()
         => Path.Combine(Path.GetTempPath(), "openclaw-runtime-lifecycle-tests", Guid.NewGuid().ToString("N"));
+
+    private static async Task<IReadOnlyList<string>> WaitForCancellationAsync(
+        CancellationToken ct,
+        TaskCompletionSource reloadCanceled)
+    {
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            reloadCanceled.TrySetResult();
+        }
+
+        return Array.Empty<string>();
+    }
 
     private static void DeleteDirectoryIfPresent(string path)
     {

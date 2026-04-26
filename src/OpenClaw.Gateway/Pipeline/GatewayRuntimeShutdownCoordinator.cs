@@ -76,12 +76,15 @@ internal sealed class GatewayRuntimeShutdownCoordinator : IHostedService
             "Shutdown signal received — draining in-flight requests ({Timeout}s timeout)…",
             startup.Config.GracefulShutdownSeconds);
 
-        await DrainInflightRequestsAsync(startup, runtime);
+        await DrainInflightRequestsAsync(startup, runtime, cancellationToken);
         await RunAsyncCleanupsAsync(asyncCleanups, cancellationToken);
         await DisposeRuntimeAsync(startup, runtime);
     }
 
-    private async Task DrainInflightRequestsAsync(GatewayStartupContext startup, GatewayAppRuntime runtime)
+    private async Task DrainInflightRequestsAsync(
+        GatewayStartupContext startup,
+        GatewayAppRuntime runtime,
+        CancellationToken cancellationToken)
     {
         if (startup.Config.GracefulShutdownSeconds <= 0)
             return;
@@ -107,7 +110,7 @@ internal sealed class GatewayRuntimeShutdownCoordinator : IHostedService
             if (remaining <= TimeSpan.Zero)
                 break;
 
-            await Task.Delay(checkInterval < remaining ? checkInterval : remaining, CancellationToken.None);
+            await Task.Delay(checkInterval < remaining ? checkInterval : remaining, cancellationToken);
         }
 
         _logger.LogInformation("Drain complete — shutting down");

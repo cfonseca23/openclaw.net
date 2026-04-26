@@ -241,8 +241,12 @@ internal sealed class SkillWatcherService : IAsyncDisposable, IDisposable
 
         try
         {
-            var loadedSkillNames = await _agentRuntime.ReloadSkillsAsync(CancellationToken.None);
+            var loadedSkillNames = await _agentRuntime.ReloadSkillsAsync(_stoppingToken);
             _logger.LogInformation("Reloaded {Count} skills after file change.", loadedSkillNames.Count);
+        }
+        catch (OperationCanceledException) when (_stoppingToken.IsCancellationRequested)
+        {
+            // Shutdown path.
         }
         catch (Exception ex)
         {
