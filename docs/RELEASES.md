@@ -66,7 +66,7 @@ The workflow currently builds:
 
 - `linux-x64` on `ubuntu-latest`
 - `win-x64` on `windows-latest`
-- `osx-arm64` on `macos-14`
+- `osx-arm64` on `macos-15`
 
 The macOS runner label is intentionally ARM-native for the `osx-arm64` artifact. Add an Intel macOS row only if you want to support older Intel Macs and have a runner that can NativeAOT publish that RID reliably.
 
