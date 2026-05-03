@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Core.Abstractions;
+using OpenClaw.Core.Memory;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Pipeline;
 using OpenClaw.Core.Plugins;
@@ -30,6 +31,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
     private readonly List<(string PluginId, string Name, string Description, Func<string, CancellationToken, Task<string>> Handler)> _commands = [];
     private readonly List<(string ProviderId, string[] Models, IChatClient Client)> _providerRegistrations = [];
     private readonly List<(string PluginId, string ProviderId, string[] Models, IChatClient Client)> _providerRegistrationsDetailed = [];
+    private readonly List<(string PluginId, string ProviderId, JsonElement? Config, Func<NativeDynamicMemoryProviderContext, IMemoryStore> Factory)> _memoryProviderRegistrations = [];
     private readonly List<string> _skillRoots = [];
     private readonly List<PluginLoadReport> _reports = [];
     private readonly List<LoadedNativePlugin> _loadedPlugins = [];
@@ -55,6 +57,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
     public IReadOnlyList<(string ProviderId, string[] Models, IChatClient Client)> ProviderRegistrations => _providerRegistrations;
     public IReadOnlyList<(string PluginId, string Name, string Description, Func<string, CancellationToken, Task<string>> Handler)> CommandRegistrations => _commands;
     public IReadOnlyList<(string PluginId, string ProviderId, string[] Models, IChatClient Client)> ProviderRegistrationsDetailed => _providerRegistrationsDetailed;
+    public IReadOnlyList<(string PluginId, string ProviderId, JsonElement? Config, Func<NativeDynamicMemoryProviderContext, IMemoryStore> Factory)> MemoryProviderRegistrations => _memoryProviderRegistrations;
     public IReadOnlyList<string> SkillRoots => _skillRoots;
     public IReadOnlyList<PluginLoadReport> Reports => _reports;
 
@@ -74,6 +77,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
         _commands.Clear();
         _providerRegistrations.Clear();
         _providerRegistrationsDetailed.Clear();
+        _memoryProviderRegistrations.Clear();
         _skillRoots.Clear();
 
         var discovery = DiscoverWithDiagnostics(workspacePath);
@@ -254,6 +258,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
             _commands.AddRange(registrationContext.Commands.Select(cmd => (manifest.Id, cmd.Name, cmd.Description, cmd.Handler)));
             _providerRegistrations.AddRange(registrationContext.Providers);
             _providerRegistrationsDetailed.AddRange(registrationContext.Providers.Select(provider => (manifest.Id, provider.ProviderId, provider.Models, provider.Client)));
+            _memoryProviderRegistrations.AddRange(registrationContext.MemoryProviders.Select(provider => (manifest.Id, provider.ProviderId, GetPluginConfig(manifest.Id), provider.Factory)));
 
             var skillDirs = ResolveSkillDirectories(plugin, diagnostics).ToArray();
             foreach (var skillDir in skillDirs)
@@ -297,6 +302,14 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
             });
             _logger.LogError(ex, "Failed to load dynamic native plugin '{PluginId}'", manifest.Id);
         }
+    }
+
+    public async Task<IReadOnlyList<(string PluginId, string ProviderId, JsonElement? Config, Func<NativeDynamicMemoryProviderContext, IMemoryStore> Factory)>> LoadMemoryProvidersAsync(
+        string? workspacePath,
+        CancellationToken ct)
+    {
+        await LoadAsync(workspacePath, ct);
+        return _memoryProviderRegistrations;
     }
 
     private JsonElement? GetPluginConfig(string pluginId)
@@ -743,6 +756,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
         public List<INativeDynamicPluginService> Services { get; } = [];
         public List<(string Name, string Description, Func<string, CancellationToken, Task<string>> Handler)> Commands { get; } = [];
         public List<(string ProviderId, string[] Models, IChatClient Client)> Providers { get; } = [];
+        public List<(string ProviderId, Func<NativeDynamicMemoryProviderContext, IMemoryStore> Factory)> MemoryProviders { get; } = [];
         public List<string> Capabilities { get; } = [];
 
         public void RegisterTool(ITool tool)
@@ -767,6 +781,12 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
         {
             Providers.Add((providerId, models, client));
             Capabilities.Add(PluginCapabilityPolicy.Providers);
+        }
+
+        public void RegisterMemoryProvider(string providerId, Func<NativeDynamicMemoryProviderContext, IMemoryStore> factory)
+        {
+            MemoryProviders.Add((providerId, factory));
+            Capabilities.Add(PluginCapabilityPolicy.Memory);
         }
 
         public void RegisterHook(IToolHook hook)

@@ -49,7 +49,6 @@ internal static partial class RuntimeInitializationExtensions
             AutomationService = app.Services.GetRequiredService<GatewayAutomationService>(),
             PluginHealth = app.Services.GetRequiredService<PluginHealthService>(),
             MemoryStore = app.Services.GetRequiredService<IMemoryStore>(),
-            KnowledgeGraph = app.Services.GetService<MemPalace.KnowledgeGraph.IKnowledgeGraph>(),
             SessionSearchStore = app.Services.GetRequiredService<ISessionSearchStore>(),
             UserProfileStore = app.Services.GetRequiredService<IUserProfileStore>(),
             ProcessService = app.Services.GetRequiredService<ExecutionProcessService>(),
@@ -198,12 +197,20 @@ internal static partial class RuntimeInitializationExtensions
 
         if (config.Plugins.DynamicNative.Enabled)
         {
-            nativeDynamicPluginHost = new NativeDynamicPluginHost(
-                config.Plugins.DynamicNative,
-                startup.RuntimeState,
-                loggerFactory.CreateLogger<NativeDynamicPluginHost>(),
-                blockedPluginIds);
-            nativeDynamicTools = await nativeDynamicPluginHost.LoadAsync(startup.WorkspacePath, app.Lifetime.ApplicationStopping);
+            nativeDynamicPluginHost = startup.NativeDynamicPluginHost;
+            if (nativeDynamicPluginHost is null)
+            {
+                nativeDynamicPluginHost = new NativeDynamicPluginHost(
+                    config.Plugins.DynamicNative,
+                    startup.RuntimeState,
+                    loggerFactory.CreateLogger<NativeDynamicPluginHost>(),
+                    blockedPluginIds);
+                nativeDynamicTools = await nativeDynamicPluginHost.LoadAsync(startup.WorkspacePath, app.Lifetime.ApplicationStopping);
+            }
+            else
+            {
+                nativeDynamicTools = nativeDynamicPluginHost.Tools;
+            }
 
             RegisterNativeDynamicChannels(channelAdapters, nativeDynamicPluginHost, runtimeDiagnostics);
             RegisterNativeDynamicCommands(services.CommandProcessor, nativeDynamicPluginHost, runtimeDiagnostics);
@@ -553,7 +560,6 @@ internal static partial class RuntimeInitializationExtensions
         public required GatewayAutomationService AutomationService { get; init; }
         public required PluginHealthService PluginHealth { get; init; }
         public required IMemoryStore MemoryStore { get; init; }
-        public MemPalace.KnowledgeGraph.IKnowledgeGraph? KnowledgeGraph { get; init; }
         public required ISessionSearchStore SessionSearchStore { get; init; }
         public required IUserProfileStore UserProfileStore { get; init; }
         public required ExecutionProcessService ProcessService { get; init; }

@@ -60,9 +60,10 @@ public static class ConfigValidator
 
         // Memory
         if (!string.Equals(config.Memory.Provider, "file", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(config.Memory.Provider, "sqlite", StringComparison.OrdinalIgnoreCase))
+            !string.Equals(config.Memory.Provider, "sqlite", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(config.Memory.Provider, "mempalace", StringComparison.OrdinalIgnoreCase))
         {
-            errors.Add($"Memory.Provider '{config.Memory.Provider}' must be 'file' or 'sqlite'.");
+            errors.Add($"Memory.Provider '{config.Memory.Provider}' must be 'file', 'sqlite', or 'mempalace'.");
         }
         if (string.IsNullOrWhiteSpace(config.Memory.StoragePath))
             errors.Add("Memory.StoragePath must be set.");

@@ -4,12 +4,14 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using OpenClaw.Channels;
 using OpenClaw.Agent;
 using OpenClaw.Agent.Execution;
+using OpenClaw.Agent.Plugins;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Features;
 using OpenClaw.Core.Memory;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
 using OpenClaw.Core.Pipeline;
+using OpenClaw.Core.Plugins;
 using OpenClaw.Core.Security;
 using OpenClaw.Core.Sessions;
 using OpenClaw.Gateway.Bootstrap;
@@ -18,9 +20,8 @@ using OpenClaw.Gateway.Models;
 using OpenClaw.Gateway.Pipeline;
 using OpenClaw.Gateway.PromptCaching;
 using OpenClaw.Core.Validation;
+using OpenClaw.PluginKit;
 using TickerQ.DependencyInjection;
-using MemPalace.KnowledgeGraph;
-using OpenClaw.Gateway.Memory;
 
 namespace OpenClaw.Gateway.Composition;
 
@@ -45,19 +46,10 @@ internal static class CoreServicesExtensions
 
         services.AddSingleton<RuntimeMetrics>();
         services.AddSingleton<IMemoryStore>(sp => CreateMemoryStore(
+            startup,
             config,
             sp.GetRequiredService<RuntimeMetrics>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger("MemoryStore")));
-        if (string.Equals(config.Memory.Provider, "mempalace", StringComparison.OrdinalIgnoreCase))
-        {
-            services.AddSingleton<IKnowledgeGraph>(sp =>
-            {
-                var memory = sp.GetRequiredService<IMemoryStore>();
-                return memory is MempalaceMemoryStore mempalaceStore
-                    ? mempalaceStore.KnowledgeGraph
-                    : throw new InvalidOperationException("The mempalace memory provider must resolve a MempalaceMemoryStore.");
-            });
-        }
         services.AddSingleton<ISessionAdminStore>(sp =>
         {
             var memory = sp.GetRequiredService<IMemoryStore>();
@@ -220,10 +212,10 @@ internal static class CoreServicesExtensions
         return Path.GetFullPath(dbPath);
     }
 
-    private static IMemoryStore CreateMemoryStore(OpenClaw.Core.Models.GatewayConfig config, RuntimeMetrics metrics, ILogger logger)
+    private static IMemoryStore CreateMemoryStore(GatewayStartupContext startup, GatewayConfig config, RuntimeMetrics metrics, ILogger logger)
     {
         if (string.Equals(config.Memory.Provider, "mempalace", StringComparison.OrdinalIgnoreCase))
-            return new MempalaceMemoryStore(config, metrics);
+            return CreateDynamicNativeMemoryStore(startup, config, metrics, logger);
 
         if (string.Equals(config.Memory.Provider, "sqlite", StringComparison.OrdinalIgnoreCase))
         {
@@ -247,5 +239,42 @@ internal static class CoreServicesExtensions
             config.Memory.StoragePath,
             config.Memory.MaxCachedSessions ?? config.MaxConcurrentSessions,
             metrics: metrics);
+    }
+
+    private static IMemoryStore CreateDynamicNativeMemoryStore(
+        GatewayStartupContext startup,
+        GatewayConfig config,
+        RuntimeMetrics metrics,
+        ILogger logger)
+    {
+        if (!config.Plugins.DynamicNative.Enabled)
+        {
+            throw new InvalidOperationException(
+                "Memory.Provider 'mempalace' is provided by a JIT-only dynamic native plugin. " +
+                "Enable OpenClaw:Plugins:DynamicNative:Enabled and load the OpenClaw.Plugins.Mempalace native plugin, or choose 'file' or 'sqlite'.");
+        }
+
+        var host = new NativeDynamicPluginHost(config.Plugins.DynamicNative, startup.RuntimeState, logger);
+        var providers = host.LoadMemoryProvidersAsync(startup.WorkspacePath, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        startup.NativeDynamicPluginHost = host;
+        var provider = providers.FirstOrDefault(item => string.Equals(item.ProviderId, config.Memory.Provider, StringComparison.OrdinalIgnoreCase));
+        if (provider.Factory is null)
+        {
+            throw new InvalidOperationException(
+                "Memory.Provider 'mempalace' was requested, but no dynamic native memory provider registered 'mempalace'. " +
+                "Load the OpenClaw.Plugins.Mempalace native plugin via OpenClaw:Plugins:DynamicNative:Load:Paths.");
+        }
+
+        return provider.Factory(new NativeDynamicMemoryProviderContext
+        {
+            PluginId = provider.PluginId,
+            ProviderId = provider.ProviderId,
+            Config = provider.Config,
+            GatewayConfig = config,
+            Metrics = metrics,
+            Logger = logger
+        });
     }
 }

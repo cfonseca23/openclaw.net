@@ -152,9 +152,6 @@ internal static partial class RuntimeInitializationExtensions
             new SessionsYieldTool(services.SessionManager, services.Pipeline, services.MemoryStore),
         };
 
-        if (services.KnowledgeGraph is not null)
-            tools.Add(new MempalaceKnowledgeGraphTool(services.KnowledgeGraph));
-
         if (browserAvailability.Registered)
             tools.Add(new BrowserTool(config.Tooling, services.RuntimeMetrics, browserAvailability.LocalExecutionSupported));
 

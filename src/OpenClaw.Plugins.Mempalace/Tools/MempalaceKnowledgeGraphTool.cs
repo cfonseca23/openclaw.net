@@ -3,21 +3,28 @@ using System.Text.Json;
 using MemPalace.KnowledgeGraph;
 using OpenClaw.Core.Abstractions;
 
-namespace OpenClaw.Gateway.Tools;
+namespace OpenClaw.Plugins.Mempalace;
 
 internal sealed class MempalaceKnowledgeGraphTool : ITool
 {
-    private readonly IKnowledgeGraph _knowledgeGraph;
+    private readonly Func<(bool Success, IKnowledgeGraph? KnowledgeGraph, string? Error)> _knowledgeGraphProvider;
 
     public MempalaceKnowledgeGraphTool(IKnowledgeGraph knowledgeGraph)
-        => _knowledgeGraph = knowledgeGraph;
+        : this(() => (true, knowledgeGraph, null))
+    {
+    }
+
+    public MempalaceKnowledgeGraphTool(Func<(bool Success, IKnowledgeGraph? KnowledgeGraph, string? Error)> knowledgeGraphProvider)
+        => _knowledgeGraphProvider = knowledgeGraphProvider;
 
     public string Name => "mempalace_kg";
 
     public string Description =>
         "Read and write MemPalace temporal knowledge graph relationships with validity windows.";
 
-    public string ParameterSchema => """
+    public string ParameterSchema => Schema;
+
+    public const string Schema = """
         {
           "type": "object",
           "properties": {
@@ -36,19 +43,23 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
 
     public async ValueTask<string> ExecuteAsync(string argumentsJson, CancellationToken ct)
     {
+        var providerResult = _knowledgeGraphProvider();
+        if (!providerResult.Success || providerResult.KnowledgeGraph is null)
+            return providerResult.Error ?? "Error: MemPalace knowledge graph is not available.";
+
         using var args = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
         var root = args.RootElement;
         var action = ReadString(root, "action");
         return action switch
         {
-            "add" => await AddAsync(root, ct),
-            "query" => await QueryAsync(root, ct),
-            "timeline" => await TimelineAsync(root, ct),
+            "add" => await AddAsync(providerResult.KnowledgeGraph, root, ct),
+            "query" => await QueryAsync(providerResult.KnowledgeGraph, root, ct),
+            "timeline" => await TimelineAsync(providerResult.KnowledgeGraph, root, ct),
             _ => "Error: action must be one of add, query, or timeline."
         };
     }
 
-    private async ValueTask<string> AddAsync(JsonElement root, CancellationToken ct)
+    private static async ValueTask<string> AddAsync(IKnowledgeGraph knowledgeGraph, JsonElement root, CancellationToken ct)
     {
         if (!TryReadEntity(root, "subject", required: true, out var subject, out var entityError))
             return entityError;
@@ -60,7 +71,7 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
 
         var now = DateTimeOffset.UtcNow;
         var validFrom = ReadDate(root, "at") ?? now;
-        var id = await _knowledgeGraph.AddAsync(
+        var id = await knowledgeGraph.AddAsync(
             new TemporalTriple(
                 new Triple(subject, predicate, obj),
                 validFrom,
@@ -71,7 +82,7 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
         return $"Added temporal triple {id}: {subject} {predicate} {obj}";
     }
 
-    private async ValueTask<string> QueryAsync(JsonElement root, CancellationToken ct)
+    private static async ValueTask<string> QueryAsync(IKnowledgeGraph knowledgeGraph, JsonElement root, CancellationToken ct)
     {
         if (!TryReadEntity(root, "subject", required: false, out var subject, out var entityError))
             return entityError;
@@ -83,7 +94,7 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
             ReadString(root, "predicate"),
             obj);
         var at = ReadDate(root, "at");
-        var results = await _knowledgeGraph.QueryAsync(pattern, at, ct);
+        var results = await knowledgeGraph.QueryAsync(pattern, at, ct);
         if (results.Count == 0)
             return "No matching temporal knowledge graph triples found.";
 
@@ -106,14 +117,14 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
         return sb.ToString().TrimEnd();
     }
 
-    private async ValueTask<string> TimelineAsync(JsonElement root, CancellationToken ct)
+    private static async ValueTask<string> TimelineAsync(IKnowledgeGraph knowledgeGraph, JsonElement root, CancellationToken ct)
     {
         if (!TryReadEntity(root, "entity", required: true, out var entity, out var entityError))
             return entityError;
         if (entity is null)
             return "Error: timeline requires entity.";
 
-        var events = await _knowledgeGraph.TimelineAsync(
+        var events = await knowledgeGraph.TimelineAsync(
             entity,
             ReadDate(root, "from"),
             ReadDate(root, "to"),
@@ -179,3 +190,4 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
     private static DateTimeOffset? ReadDate(JsonElement root, string propertyName)
         => DateTimeOffset.TryParse(ReadString(root, propertyName), out var value) ? value : null;
 }
+

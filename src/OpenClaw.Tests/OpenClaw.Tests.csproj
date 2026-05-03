@@ -2,6 +2,7 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <OpenClawEnableMafExperiment Condition="'$(OpenClawEnableMafExperiment)' == ''">false</OpenClawEnableMafExperiment>
+    <OpenClawEnableMempalace Condition="'$(OpenClawEnableMempalace)' == ''">false</OpenClawEnableMempalace>
     <OpenClawEnableOpenSandbox Condition="'$(OpenClawEnableOpenSandbox)' == ''">false</OpenClawEnableOpenSandbox>
     <RootNamespace>OpenClaw.Tests</RootNamespace>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.OpenApi.Generated</InterceptorsNamespaces>
@@ -23,12 +24,18 @@
   <ItemGroup Condition="'$(OpenClawEnableMafExperiment)' == 'true'">
     <ProjectReference Include="..\OpenClaw.MicrosoftAgentFrameworkAdapter\OpenClaw.MicrosoftAgentFrameworkAdapter.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="'$(OpenClawEnableMempalace)' == 'true'">
+    <ProjectReference Include="..\OpenClaw.Plugins.Mempalace\OpenClaw.Plugins.Mempalace.csproj" />
+  </ItemGroup>
   <ItemGroup Condition="'$(OpenClawEnableOpenSandbox)' == 'true'">
     <ProjectReference Include="..\OpenClawNet.Sandbox.OpenSandbox\OpenClawNet.Sandbox.OpenSandbox.csproj" />
   </ItemGroup>
 
   <PropertyGroup Condition="'$(OpenClawEnableMafExperiment)' == 'true'">
     <DefineConstants>$(DefineConstants);OPENCLAW_ENABLE_MAF_EXPERIMENT</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(OpenClawEnableMempalace)' == 'true'">
+    <DefineConstants>$(DefineConstants);OPENCLAW_ENABLE_MEMPALACE</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition="'$(OpenClawEnableOpenSandbox)' == 'true'">
     <DefineConstants>$(DefineConstants);OPENCLAW_ENABLE_OPENSANDBOX</DefineConstants>

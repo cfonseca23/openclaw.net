@@ -4,13 +4,13 @@
     <OutputType>Exe</OutputType>
     <OpenClawEnableMafExperiment Condition="'$(OpenClawEnableMafExperiment)' == ''">false</OpenClawEnableMafExperiment>
     <OpenClawEnableOpenSandbox Condition="'$(OpenClawEnableOpenSandbox)' == ''">false</OpenClawEnableOpenSandbox>
-    <PublishAot>true</PublishAot>
+    <PublishAot>false</PublishAot>
     <StripSymbols>true</StripSymbols>
     <OptimizationPreference>Size</OptimizationPreference>
-    <!-- Aggressive AOT trimming for minimal binary -->
-    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
-    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
-    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
+    <!-- AOT size knobs only apply when PublishAot is explicitly enabled for a separate artifact. -->
+    <IlcGenerateStackTraceData Condition="'$(PublishAot)' == 'true'">false</IlcGenerateStackTraceData>
+    <IlcOptimizationPreference Condition="'$(PublishAot)' == 'true'">Size</IlcOptimizationPreference>
+    <IlcFoldIdenticalMethodBodies Condition="'$(PublishAot)' == 'true'">true</IlcFoldIdenticalMethodBodies>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <EventSourceSupport>false</EventSourceSupport>
     <DebuggerSupport>false</DebuggerSupport>
@@ -19,7 +19,7 @@
     <!-- Playwright is not AOT-compatible (deep reflection usage); keep package-level warnings suppressed while surfacing project-owned trim diagnostics. -->
     <NoWarn>$(NoWarn);IL2104;IL3000;IL3002;IL3053</NoWarn>
   </PropertyGroup>
-  <ItemGroup>
+  <ItemGroup Condition="'$(PublishAot)' == 'true'">
     <TrimmerRootAssembly Include="Microsoft.Playwright" />
   </ItemGroup>
   <ItemGroup>
@@ -43,9 +43,6 @@
     <PackageReference Include="Anthropic" Version="12.11.0" />
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
     <PackageReference Include="GeminiDotnet.Extensions.AI" Version="0.23.0" />
-    <PackageReference Include="MemPalace.Backends.Sqlite" Version="0.15.0" />
-    <PackageReference Include="MemPalace.Core" Version="0.15.0" />
-    <PackageReference Include="MemPalace.KnowledgeGraph" Version="0.15.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.1.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />

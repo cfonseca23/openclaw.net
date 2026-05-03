@@ -1,7 +1,11 @@
+#if OPENCLAW_ENABLE_MEMPALACE
+using Microsoft.Extensions.Logging;
+using OpenClaw.Agent.Plugins;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
-using OpenClaw.Gateway.Memory;
-using OpenClaw.Gateway.Tools;
+using OpenClaw.Core.Plugins;
+using OpenClaw.Plugins.Mempalace;
+using OpenClaw.PluginKit;
 using MemPalace.KnowledgeGraph;
 using Xunit;
 
@@ -21,6 +25,52 @@ public sealed class MempalaceMemoryStoreTests : IAsyncLifetime
     {
         try { Directory.Delete(_storagePath, recursive: true); } catch { }
         return Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task NativeDynamicPlugin_RegistersMempalaceMemoryProvider()
+    {
+        var pluginDir = Path.GetDirectoryName(typeof(MempalaceMemoryPlugin).Assembly.Location)
+            ?? throw new InvalidOperationException("Could not resolve MemPalace plugin assembly directory.");
+
+        Assert.True(File.Exists(Path.Combine(pluginDir, "openclaw.native-plugin.json")));
+
+        var pluginConfig = new NativeDynamicPluginsConfig
+        {
+            Enabled = true,
+            Load = new PluginLoadConfig { Paths = [pluginDir] }
+        };
+
+        await using var host = new NativeDynamicPluginHost(
+            pluginConfig,
+            RuntimeModeResolver.Resolve(new RuntimeConfig { Mode = "jit" }, dynamicCodeSupported: true),
+            new TestLogger());
+
+        var providers = await host.LoadMemoryProvidersAsync(null, CancellationToken.None);
+        var provider = Assert.Single(providers, static item => string.Equals(item.ProviderId, "mempalace", StringComparison.OrdinalIgnoreCase));
+
+        var store = provider.Factory(new NativeDynamicMemoryProviderContext
+        {
+            PluginId = provider.PluginId,
+            ProviderId = provider.ProviderId,
+            Config = provider.Config,
+            GatewayConfig = CreateConfig(_storagePath),
+            Metrics = new RuntimeMetrics(),
+            Logger = new TestLogger()
+        });
+
+        await using var disposableStore = store as IAsyncDisposable;
+
+        await store.SaveNoteAsync("project:demo:plugin", "Loaded through INativeDynamicPlugin.", CancellationToken.None);
+
+        var tool = Assert.Single(host.Tools, static item => item.Name == "mempalace_kg");
+        var toolResult = await tool.ExecuteAsync(
+            """{"action":"query","subject":"memory:project:demo:plugin","predicate":"stored-in"}""",
+            CancellationToken.None);
+
+        Assert.Equal("Loaded through INativeDynamicPlugin.", await store.LoadNoteAsync("project:demo:plugin", CancellationToken.None));
+        Assert.Contains("memory:project:demo:plugin stored-in drawer:plugin", toolResult, StringComparison.Ordinal);
+        Assert.Contains(host.Reports, report => report.PluginId == "openclaw-mempalace-memory" && report.Loaded);
     }
 
     [Fact]
@@ -78,25 +128,36 @@ public sealed class MempalaceMemoryStoreTests : IAsyncLifetime
     }
 
     private MempalaceMemoryStore CreateStore()
+        => new(CreateConfig(_storagePath), new RuntimeMetrics());
+
+    private static GatewayConfig CreateConfig(string storagePath)
     {
-        var config = new GatewayConfig
+        return new GatewayConfig
         {
             Memory = new MemoryConfig
             {
                 Provider = "mempalace",
-                StoragePath = _storagePath,
+                StoragePath = storagePath,
                 Mempalace = new MemoryMempalaceConfig
                 {
-                    BasePath = Path.Combine(_storagePath, "palace"),
-                    SessionDbPath = Path.Combine(_storagePath, "sessions.db"),
-                    KnowledgeGraphDbPath = Path.Combine(_storagePath, "kg.db"),
+                    BasePath = Path.Combine(storagePath, "palace"),
+                    SessionDbPath = Path.Combine(storagePath, "sessions.db"),
+                    KnowledgeGraphDbPath = Path.Combine(storagePath, "kg.db"),
                     PalaceId = "test",
                     CollectionName = "memories",
                     EmbeddingDimensions = 64
                 }
             }
         };
+    }
 
-        return new MempalaceMemoryStore(config, new RuntimeMetrics());
+    private sealed class TestLogger : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => false;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        { }
     }
 }
+#endif

@@ -1,0 +1,9 @@
+{
+  "id": "openclaw-mempalace-memory",
+  "name": "OpenClaw MemPalace memory provider",
+  "version": "1.0.0",
+  "assemblyPath": "OpenClaw.Plugins.Mempalace.dll",
+  "typeName": "OpenClaw.Plugins.Mempalace.MempalaceMemoryPlugin",
+  "capabilities": ["memory", "tools"],
+  "jitOnly": true
+}
