@@ -4,13 +4,13 @@
     <OutputType>Exe</OutputType>
     <OpenClawEnableMafExperiment Condition="'$(OpenClawEnableMafExperiment)' == ''">false</OpenClawEnableMafExperiment>
     <OpenClawEnableOpenSandbox Condition="'$(OpenClawEnableOpenSandbox)' == ''">false</OpenClawEnableOpenSandbox>
-    <PublishAot>false</PublishAot>
+    <PublishAot>true</PublishAot>
     <StripSymbols>true</StripSymbols>
     <OptimizationPreference>Size</OptimizationPreference>
-    <!-- AOT size knobs only apply when PublishAot is explicitly enabled for a separate artifact. -->
-    <IlcGenerateStackTraceData Condition="'$(PublishAot)' == 'true'">false</IlcGenerateStackTraceData>
-    <IlcOptimizationPreference Condition="'$(PublishAot)' == 'true'">Size</IlcOptimizationPreference>
-    <IlcFoldIdenticalMethodBodies Condition="'$(PublishAot)' == 'true'">true</IlcFoldIdenticalMethodBodies>
+    <!-- Aggressive AOT trimming for minimal binary -->
+    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <EventSourceSupport>false</EventSourceSupport>
     <DebuggerSupport>false</DebuggerSupport>
@@ -19,7 +19,7 @@
     <!-- Playwright is not AOT-compatible (deep reflection usage); keep package-level warnings suppressed while surfacing project-owned trim diagnostics. -->
     <NoWarn>$(NoWarn);IL2104;IL3000;IL3002;IL3053</NoWarn>
   </PropertyGroup>
-  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+  <ItemGroup>
     <TrimmerRootAssembly Include="Microsoft.Playwright" />
   </ItemGroup>
   <ItemGroup>
