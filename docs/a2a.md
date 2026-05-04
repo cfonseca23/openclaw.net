@@ -76,6 +76,29 @@ For public deployments, configure gateway authentication before exposing the A2A
 
 The current A2A endpoint does not advertise protocol-level streaming. OpenClaw's internal agent runtime can stream, but the current A2A handler completes responses as a single A2A result until protocol-level streaming is implemented and tested.
 
+## REST Response Materialization
+
+The REST `POST /a2a/message:send` path must always materialize at least one A2A protocol event for every non-cancelled request. If the A2A server receives no events from the handler, the A2A SDK returns HTTP 500 with an error similar to:
+
+```text
+A2A.A2AException: Agent handler did not produce any response events.
+```
+
+OpenClaw avoids this by using an explicit keyed `OpenClawA2AAgentHandler` for the A2A server execution path. The handler bridges the OpenClaw runtime stream into a direct A2A agent `Message` event instead of relying on SDK response-update conversion from `AIAgent` streaming updates. This keeps `message:send` deterministic even when the underlying OpenClaw turn completes without text deltas.
+
+Expected handler behavior:
+
+| Runtime outcome | A2A REST response behavior |
+| --- | --- |
+| Text deltas are produced | Concatenate text deltas into one agent message. |
+| The runtime completes without text | Return `[openclaw] Request completed.` as an agent message. |
+| A recoverable bridge/runtime exception occurs | Log the exception and return `A2A request failed.` as an agent message. |
+| The request is cancelled | Propagate cancellation instead of fabricating a response. |
+
+The gateway still registers the Microsoft Agent Framework `AIAgent` host surface for metadata and session integration, but REST execution is intentionally routed through the explicit A2A event-queue handler. This is important because the preview hosting package can otherwise finish an OpenClaw turn while producing no materializable A2A response events.
+
+If this error appears in logs, verify the active build includes the explicit keyed `IAgentHandler` registration for the `openclaw` A2A service and that the process was restarted after rebuilding. Focused regression coverage lives in the A2A HTTP endpoint tests and includes bridge exceptions, complete-without-text turns, and requests that omit `MessageId`.
+
 ## AOT and JIT Notes
 
 This integration stays behind the Microsoft Agent Framework experiment and uses the A2A SDK preview hosting package. Core OpenClaw runtime paths remain independent of the A2A package surface.
