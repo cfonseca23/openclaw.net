@@ -1,6 +1,7 @@
 #if OPENCLAW_ENABLE_MAF_EXPERIMENT
 using A2A;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -30,37 +31,38 @@ public sealed class A2AIntegrationTests
         var agentInterface = Assert.Single(card.SupportedInterfaces!);
         Assert.Equal("http://localhost:5000/a2a", agentInterface.Url);
         Assert.Equal(ProtocolBindingNames.HttpJson, agentInterface.ProtocolBinding);
+        Assert.False(card.Capabilities!.Streaming);
     }
 
     [Fact]
-    public async Task AgentHandler_ExecuteAsync_Completes_With_Bridged_Text()
+    public async Task A2AAgent_RunStreamingAsync_Completes_With_Bridged_Text()
     {
-        var handler = new OpenClawA2AAgentHandler(
+        var agent = new OpenClawA2AAgent(
             Options.Create(CreateOptions()),
             new FakeExecutionBridge(),
-            NullLogger<OpenClawA2AAgentHandler>.Instance);
-        var queue = new AgentEventQueue();
-        var context = new RequestContext
-        {
-            Message = new Message
-            {
-                Role = Role.User,
-                Parts = [Part.FromText("Hello A2A")]
-            },
-            TaskId = "task-1",
-            ContextId = "ctx-1",
-            StreamingResponse = false
-        };
+            NullLogger<OpenClawA2AAgent>.Instance);
 
-        var events = new List<StreamResponse>();
-        await handler.ExecuteAsync(context, queue, CancellationToken.None);
-        queue.Complete();
-        await foreach (var evt in queue)
-            events.Add(evt);
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync("Hello A2A"))
+            updates.Add(update);
 
-        var completed = events.LastOrDefault(item => item.StatusUpdate?.Status.State == TaskState.Completed);
-        Assert.NotNull(completed);
-        Assert.Contains("bridge:Hello A2A", completed!.StatusUpdate!.Status.Message!.Parts![0].Text);
+        Assert.Contains(updates, update => update.Text.Contains("bridge:Hello A2A", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A2AAgent_RunStreamingAsync_Emits_Fallback_Text_When_Bridge_Completes_Without_Text()
+    {
+        var agent = new OpenClawA2AAgent(
+            Options.Create(CreateOptions()),
+            new CompleteOnlyExecutionBridge(),
+            NullLogger<OpenClawA2AAgent>.Instance);
+
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync("Hello A2A"))
+            updates.Add(update);
+
+        var fallbackUpdate = Assert.Single(updates);
+        Assert.Equal("[openclaw] Request completed.", fallbackUpdate.Text);
     }
 
     [Fact]
@@ -74,11 +76,15 @@ public sealed class A2AIntegrationTests
 
         await using var provider = services.BuildServiceProvider();
 
+        Assert.NotNull(provider.GetService<OpenClawA2AAgent>());
         Assert.NotNull(provider.GetService<OpenClawA2AAgentHandler>());
         Assert.NotNull(provider.GetService<OpenClawAgentCardFactory>());
-        Assert.NotNull(provider.GetRequiredKeyedService<ITaskStore>(OpenClawA2ANames.AgentName));
         Assert.NotNull(provider.GetRequiredKeyedService<IAgentHandler>(OpenClawA2ANames.AgentName));
+        Assert.NotNull(provider.GetRequiredKeyedService<ITaskStore>(OpenClawA2ANames.AgentName));
         Assert.NotNull(provider.GetRequiredKeyedService<A2AServer>(OpenClawA2ANames.AgentName));
+        var registrationAgent = provider.GetRequiredKeyedService<AIAgent>(OpenClawA2ANames.AgentName);
+        Assert.Equal(OpenClawA2ANames.AgentName, registrationAgent.Name);
+        Assert.Equal("Test agent for A2A integration tests.", registrationAgent.Description);
     }
 
     [Fact]
@@ -190,6 +196,54 @@ public sealed class A2AIntegrationTests
     }
 
     [Fact]
+    public void GetWellKnownAgentCardPath_Returns_Standard_Root_Discovery_Path()
+    {
+        Assert.Equal("/.well-known/agent-card.json", A2AEndpointExtensions.GetWellKnownAgentCardPath());
+    }
+
+    [Fact]
+    public void GetLegacyWellKnownAgentCardPath_Returns_PathPrefix_Alias()
+    {
+        Assert.Equal(
+            "/a2a/.well-known/agent-card.json",
+            A2AEndpointExtensions.GetLegacyWellKnownAgentCardPath("/a2a"));
+    }
+
+    [Theory]
+    [InlineData("/.well-known/agent-card.json", true)]
+    [InlineData("/.WELL-KNOWN/AGENT-CARD.JSON", true)]
+    [InlineData("/a2a/.well-known/agent-card.json", true)]
+    [InlineData("/a2a", false)]
+    [InlineData("/a2a/rpc", false)]
+    public void IsA2ADiscoveryPath_Recognizes_Standard_And_Legacy_Discovery(string path, bool expected)
+    {
+        Assert.Equal(expected, A2AEndpointExtensions.IsA2ADiscoveryPath(new PathString(path), "/a2a"));
+    }
+
+    [Fact]
+    public void BuildAgentCardForRequest_Uses_Request_Base_Url_For_Supported_Interfaces()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("agent.example.test");
+        context.Request.PathBase = new PathString("/gateway");
+        var factory = new OpenClawAgentCardFactory(Options.Create(CreateOptions()));
+
+        var card = A2AEndpointExtensions.BuildAgentCardForRequest(
+            context,
+            CreateStartupContext(),
+            CreateOptions(),
+            factory,
+            "/a2a",
+            "/a2a/rpc");
+
+        Assert.Collection(
+            card.SupportedInterfaces!,
+            httpJson => Assert.Equal("https://agent.example.test/gateway/a2a", httpJson.Url),
+            jsonRpc => Assert.Equal("https://agent.example.test/gateway/a2a/rpc", jsonRpc.Url));
+    }
+
+    [Fact]
     public void AgentCardFactory_Creates_HttpJson_And_JsonRpc_Interfaces_When_JsonRpc_Url_Is_Provided()
     {
         var factory = new OpenClawAgentCardFactory(Options.Create(CreateOptions()));
@@ -245,6 +299,17 @@ public sealed class A2AIntegrationTests
             CancellationToken cancellationToken)
         {
             await onEvent(AgentStreamEvent.TextDelta($"bridge:{request.UserText}"), cancellationToken);
+            await onEvent(AgentStreamEvent.Complete(), cancellationToken);
+        }
+    }
+
+    private sealed class CompleteOnlyExecutionBridge : IOpenClawA2AExecutionBridge
+    {
+        public async Task ExecuteStreamingAsync(
+            OpenClawA2AExecutionRequest request,
+            Func<AgentStreamEvent, CancellationToken, ValueTask> onEvent,
+            CancellationToken cancellationToken)
+        {
             await onEvent(AgentStreamEvent.Complete(), cancellationToken);
         }
     }

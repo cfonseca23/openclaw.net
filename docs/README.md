@@ -22,6 +22,7 @@ Use this page as the map. If you are unsure where to go next, the groups below a
 | [mempalace-memory.md](mempalace-memory.md) | Optional ElBruno.MempalaceNet memory provider and temporal KG tool. |
 | [SESSIONS.md](SESSIONS.md) | Session lifecycle, the `SessionManager`, and the `sessions_spawn` / `sessions_yield` / `sessions` tools. |
 | [CANVAS_A2UI.md](CANVAS_A2UI.md) | Supported Canvas and A2UI behavior for agent-rendered visual workspaces. |
+| [a2a.md](a2a.md) | Experimental A2A v1 discovery, endpoint, authentication, and deployment contract. |
 | [MODEL_PROFILES.md](MODEL_PROFILES.md) | Provider-agnostic named model profiles, including Gemma-family setups. |
 | [PROMPT_CACHING.md](PROMPT_CACHING.md) | Provider-aware prompt caching hints, dialects, diagnostics. |
 

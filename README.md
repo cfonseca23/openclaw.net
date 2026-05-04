@@ -30,6 +30,8 @@ It is for .NET developers and operators who want a local or self-hosted agent ga
 
 Start with [docs/START_HERE.md](docs/START_HERE.md) for the evaluator overview, [docs/QUICKSTART.md](docs/QUICKSTART.md) for the supported local setup path, or [docs/RELEASES.md](docs/RELEASES.md) for desktop downloads.
 
+For the experimental A2A v1 surface, see [docs/a2a.md](docs/a2a.md).
+
 ## Fastest Source Proof
 
 This deterministic sample proves the runtime loop and tool path without provider keys, Ollama, Docker, or a browser:
