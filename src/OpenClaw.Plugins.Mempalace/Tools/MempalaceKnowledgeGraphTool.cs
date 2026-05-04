@@ -33,7 +33,8 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
             "predicate": { "type": "string", "description": "Relationship predicate for add/query" },
             "object": { "type": "string", "description": "Object entity as type:id for add/query" },
             "entity": { "type": "string", "description": "Entity as type:id for timeline" },
-            "at": { "type": "string", "description": "Optional ISO8601 point-in-time query" },
+            "at": { "type": "string", "description": "Optional ISO8601 point-in-time query for query actions" },
+            "valid_from": { "type": "string", "description": "Optional ISO8601 valid-from timestamp for add actions" },
             "from": { "type": "string", "description": "Optional ISO8601 timeline start" },
             "to": { "type": "string", "description": "Optional ISO8601 timeline end" }
           },
@@ -47,16 +48,22 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
         if (!providerResult.Success || providerResult.KnowledgeGraph is null)
             return providerResult.Error ?? "Error: MemPalace knowledge graph is not available.";
 
-        using var args = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
-        var root = args.RootElement;
-        var action = ReadString(root, "action");
-        return action switch
+        var args = TryParseArguments(argumentsJson, out var parseError);
+        if (args is null)
+            return parseError;
+
+        using (args)
         {
-            "add" => await AddAsync(providerResult.KnowledgeGraph, root, ct),
-            "query" => await QueryAsync(providerResult.KnowledgeGraph, root, ct),
-            "timeline" => await TimelineAsync(providerResult.KnowledgeGraph, root, ct),
-            _ => "Error: action must be one of add, query, or timeline."
-        };
+            var root = args.RootElement;
+            var action = ReadString(root, "action");
+            return action switch
+            {
+                "add" => await AddAsync(providerResult.KnowledgeGraph, root, ct),
+                "query" => await QueryAsync(providerResult.KnowledgeGraph, root, ct),
+                "timeline" => await TimelineAsync(providerResult.KnowledgeGraph, root, ct),
+                _ => "Error: action must be one of add, query, or timeline."
+            };
+        }
     }
 
     private static async ValueTask<string> AddAsync(IKnowledgeGraph knowledgeGraph, JsonElement root, CancellationToken ct)
@@ -70,7 +77,7 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
             return "Error: add requires subject, predicate, and object.";
 
         var now = DateTimeOffset.UtcNow;
-        var validFrom = ReadDate(root, "at") ?? now;
+        var validFrom = ReadDate(root, "valid_from") ?? ReadDate(root, "at") ?? now;
         var id = await knowledgeGraph.AddAsync(
             new TemporalTriple(
                 new Triple(subject, predicate, obj),
@@ -189,5 +196,18 @@ internal sealed class MempalaceKnowledgeGraphTool : ITool
 
     private static DateTimeOffset? ReadDate(JsonElement root, string propertyName)
         => DateTimeOffset.TryParse(ReadString(root, propertyName), out var value) ? value : null;
-}
 
+    private static JsonDocument? TryParseArguments(string argumentsJson, out string error)
+    {
+        error = string.Empty;
+        try
+        {
+            return JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
+        }
+        catch (JsonException ex)
+        {
+            error = $"Error: invalid JSON arguments. {ex.Message}";
+            return null;
+        }
+    }
+}

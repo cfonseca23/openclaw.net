@@ -13,7 +13,7 @@ namespace OpenClaw.Tests;
 
 public sealed class MempalaceMemoryStoreTests : IAsyncLifetime
 {
-    private readonly string _storagePath = Path.Combine(Path.GetTempPath(), "openclaw-mempalace-tests", Guid.NewGuid().ToString("N"));
+    private readonly string _storagePath = Path.Join(Path.GetTempPath(), "openclaw-mempalace-tests", Guid.NewGuid().ToString("N"));
 
     public Task InitializeAsync()
     {
@@ -33,7 +33,7 @@ public sealed class MempalaceMemoryStoreTests : IAsyncLifetime
         var pluginDir = Path.GetDirectoryName(typeof(MempalaceMemoryPlugin).Assembly.Location)
             ?? throw new InvalidOperationException("Could not resolve MemPalace plugin assembly directory.");
 
-        Assert.True(File.Exists(Path.Combine(pluginDir, "openclaw.native-plugin.json")));
+        Assert.True(File.Exists(Path.Join(pluginDir, "openclaw.native-plugin.json")));
 
         var pluginConfig = new NativeDynamicPluginsConfig
         {
@@ -127,6 +127,17 @@ public sealed class MempalaceMemoryStoreTests : IAsyncLifetime
         Assert.Contains("agent:openclaw uses memory:mempalace", query, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task KnowledgeGraphTool_InvalidJson_ReturnsToolError()
+    {
+        await using var store = CreateStore();
+        var tool = new MempalaceKnowledgeGraphTool(store.KnowledgeGraph);
+
+        var result = await tool.ExecuteAsync("{", CancellationToken.None);
+
+        Assert.StartsWith("Error: invalid JSON arguments.", result, StringComparison.Ordinal);
+    }
+
     private MempalaceMemoryStore CreateStore()
         => new(CreateConfig(_storagePath), new RuntimeMetrics());
 
@@ -140,9 +151,9 @@ public sealed class MempalaceMemoryStoreTests : IAsyncLifetime
                 StoragePath = storagePath,
                 Mempalace = new MemoryMempalaceConfig
                 {
-                    BasePath = Path.Combine(storagePath, "palace"),
-                    SessionDbPath = Path.Combine(storagePath, "sessions.db"),
-                    KnowledgeGraphDbPath = Path.Combine(storagePath, "kg.db"),
+                    BasePath = Path.Join(storagePath, "palace"),
+                    SessionDbPath = Path.Join(storagePath, "sessions.db"),
+                    KnowledgeGraphDbPath = Path.Join(storagePath, "kg.db"),
                     PalaceId = "test",
                     CollectionName = "memories",
                     EmbeddingDimensions = 64

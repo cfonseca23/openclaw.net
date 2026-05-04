@@ -212,10 +212,22 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
         var manifest = plugin.Manifest;
         var diagnostics = new List<PluginCompatibilityDiagnostic>();
         var requestedCapabilities = DetermineRequestedCapabilities(manifest.Capabilities, ResolveSkillDirectories(plugin, diagnostics));
+        NativeDynamicPluginLoadContext? loadContext = null;
+        var startedServices = new List<INativeDynamicPluginService>();
+        var retainedByHost = false;
+        var toolsBefore = _tools.Count;
+        var channelAdaptersBefore = _channelAdapters.Count;
+        var channelRegistrationsBefore = _channelRegistrations.Count;
+        var toolHooksBefore = _toolHooks.Count;
+        var commandsBefore = _commands.Count;
+        var providerRegistrationsBefore = _providerRegistrations.Count;
+        var providerRegistrationsDetailedBefore = _providerRegistrationsDetailed.Count;
+        var memoryProviderRegistrationsBefore = _memoryProviderRegistrations.Count;
+        var skillRootsBefore = _skillRoots.Count;
 
         try
         {
-            var loadContext = new NativeDynamicPluginLoadContext(plugin.AssemblyPath);
+            loadContext = new NativeDynamicPluginLoadContext(plugin.AssemblyPath);
             var assembly = loadContext.LoadFromAssemblyPath(plugin.AssemblyPath);
             if (!TryValidatePluginKitReference(assembly, plugin.AssemblyPath, diagnostics))
                 throw new InvalidOperationException($"Dynamic native plugin '{manifest.Id}' references an incompatible OpenClaw.PluginKit version.");
@@ -232,7 +244,10 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
             instance.Register(registrationContext);
 
             foreach (var service in registrationContext.Services)
+            {
                 await service.StartAsync(ct);
+                startedServices.Add(service);
+            }
 
             foreach (var tool in registrationContext.Tools)
             {
@@ -268,6 +283,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
             }
 
             _loadedPlugins.Add(new LoadedNativePlugin(manifest.Id, loadContext, registrationContext.Services.ToArray()));
+            retainedByHost = true;
 
             _reports.Add(new PluginLoadReport
             {
@@ -287,8 +303,18 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
                 Diagnostics = [.. diagnostics]
             });
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            if (!retainedByHost)
+                await CleanupFailedPluginLoadAsync();
+
+            throw;
+        }
         catch (Exception ex)
         {
+            if (!retainedByHost)
+                await CleanupFailedPluginLoadAsync();
+
             _reports.Add(new PluginLoadReport
             {
                 PluginId = manifest.Id,
@@ -302,6 +328,45 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
             });
             _logger.LogError(ex, "Failed to load dynamic native plugin '{PluginId}'", manifest.Id);
         }
+
+        async Task CleanupFailedPluginLoadAsync()
+        {
+            await DisposeFailedPluginLoadAsync(loadContext, startedServices);
+            Truncate(_tools, toolsBefore);
+            Truncate(_channelAdapters, channelAdaptersBefore);
+            Truncate(_channelRegistrations, channelRegistrationsBefore);
+            Truncate(_toolHooks, toolHooksBefore);
+            Truncate(_commands, commandsBefore);
+            Truncate(_providerRegistrations, providerRegistrationsBefore);
+            Truncate(_providerRegistrationsDetailed, providerRegistrationsDetailedBefore);
+            Truncate(_memoryProviderRegistrations, memoryProviderRegistrationsBefore);
+            Truncate(_skillRoots, skillRootsBefore);
+        }
+    }
+
+    private static void Truncate<T>(List<T> items, int count)
+    {
+        if (items.Count > count)
+            items.RemoveRange(count, items.Count - count);
+    }
+
+    private static async Task DisposeFailedPluginLoadAsync(
+        NativeDynamicPluginLoadContext? loadContext,
+        IReadOnlyList<INativeDynamicPluginService> startedServices)
+    {
+        foreach (var service in startedServices)
+        {
+            try
+            {
+                await service.StopAsync(CancellationToken.None);
+            }
+            catch
+            {
+                // Best effort after failed plugin startup.
+            }
+        }
+
+        loadContext?.Unload();
     }
 
     public async Task<IReadOnlyList<(string PluginId, string ProviderId, JsonElement? Config, Func<NativeDynamicMemoryProviderContext, IMemoryStore> Factory)>> LoadMemoryProvidersAsync(
@@ -411,7 +476,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
             var expanded = Environment.ExpandEnvironmentVariables(configPath);
             if (expanded.StartsWith('~'))
             {
-                expanded = Path.Combine(
+                expanded = Path.Join(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                     expanded[1..].TrimStart('/').TrimStart('\\'));
             }
@@ -424,12 +489,12 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
 
         if (!string.IsNullOrWhiteSpace(workspacePath))
         {
-            var wsDir = Path.Combine(workspacePath, ".openclaw", "native-plugins");
+            var wsDir = Path.Join(workspacePath, ".openclaw", "native-plugins");
             if (Directory.Exists(wsDir))
                 ScanDirectory(wsDir, seen, result);
         }
 
-        var globalDir = Path.Combine(
+        var globalDir = Path.Join(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".openclaw",
             "native-plugins");
@@ -441,7 +506,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
 
     private void ScanDirectory(string root, HashSet<string> seen, NativeDynamicDiscoveryResult result)
     {
-        var manifestPath = Path.Combine(root, ManifestFileName);
+        var manifestPath = Path.Join(root, ManifestFileName);
         if (File.Exists(manifestPath))
         {
             TryAddFromManifestFile(manifestPath, seen, result);
@@ -519,7 +584,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
             {
                 PluginId = manifest.Id,
                 SourcePath = Path.GetFullPath(rootPath),
-                EntryPath = Path.GetFullPath(Path.Combine(rootPath, manifest.AssemblyPath)),
+                EntryPath = ResolveDiagnosticPath(rootPath, manifest.AssemblyPath),
                 Origin = "native_dynamic",
                 EffectiveRuntimeMode = _runtimeState.EffectiveModeName,
                 Loaded = false,
@@ -583,6 +648,11 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
         });
     }
 
+    private static string ResolveDiagnosticPath(string rootPath, string relativeOrRootedPath)
+        => Path.GetFullPath(Path.IsPathRooted(relativeOrRootedPath)
+            ? relativeOrRootedPath
+            : Path.Join(rootPath, relativeOrRootedPath));
+
     public async ValueTask DisposeAsync()
     {
         foreach (var loadedPlugin in _loadedPlugins)
@@ -622,6 +692,7 @@ public sealed class NativeDynamicPluginHost : IAsyncDisposable, IPluginRuntimeTe
         _commands.Clear();
         _providerRegistrations.Clear();
         _providerRegistrationsDetailed.Clear();
+        _memoryProviderRegistrations.Clear();
         _skillRoots.Clear();
         _reports.Clear();
     }

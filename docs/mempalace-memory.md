@@ -39,8 +39,6 @@ Set the memory provider to `mempalace`:
 
 Existing `file` and `sqlite` providers remain the defaults and are unchanged.
 
-The checked-in Gateway JIT lane uses the same shape in `src/OpenClaw.Gateway/appsettings.json`: `OpenClaw:Runtime:Mode` is `jit`, `OpenClaw:Memory:Provider` is `mempalace`, and `OpenClaw:Plugins:DynamicNative:Load:Paths` points at the MemPalace plugin output directory.
-
 Build or publish the MemPalace plugin into the configured plugin directory:
 
 ```bash

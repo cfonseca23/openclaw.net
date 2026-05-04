@@ -123,6 +123,41 @@ public sealed class NativeDynamicPluginHostTests : IDisposable
     }
 
     [Fact]
+    public async Task DisposeAsync_ClearsMemoryProviderRegistrations()
+    {
+        var pluginDir = CreateNativePlugin(
+            "native-dynamic-memory",
+            typeof(ToolAndCommandPlugin).Assembly.Location,
+            typeof(ToolAndCommandPlugin).FullName!,
+            ["memory"]);
+
+        var config = new NativeDynamicPluginsConfig
+        {
+            Enabled = true,
+            Load = new PluginLoadConfig { Paths = [pluginDir] },
+            Entries = new Dictionary<string, PluginEntryConfig>(StringComparer.Ordinal)
+            {
+                ["native-dynamic-memory"] = new()
+                {
+                    Config = JsonSerializer.SerializeToElement(new { memoryProviderId = "mempalace" })
+                }
+            }
+        };
+
+        var host = new NativeDynamicPluginHost(
+            config,
+            RuntimeModeResolver.Resolve(new RuntimeConfig { Mode = "jit" }, dynamicCodeSupported: true),
+            new TestLogger());
+
+        var providers = await host.LoadMemoryProvidersAsync(null, CancellationToken.None);
+        Assert.Single(providers);
+
+        await host.DisposeAsync();
+
+        Assert.Empty(host.MemoryProviderRegistrations);
+    }
+
+    [Fact]
     public async Task LoadAsync_AssemblyPathOutsideRoot_IsRejected()
     {
         var pluginDir = Path.Combine(_tempDir, "native-dynamic-escape");

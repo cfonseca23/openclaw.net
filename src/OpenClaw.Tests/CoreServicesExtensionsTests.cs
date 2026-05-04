@@ -18,7 +18,7 @@ public sealed class CoreServicesExtensionsTests
     [Fact]
     public void AddOpenClawCoreServices_RegistersLearningConfigForLearningService()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempPath);
         try
         {
@@ -61,7 +61,7 @@ public sealed class CoreServicesExtensionsTests
     [Fact]
     public void AddOpenClawCoreServices_WithSecurityServices_AllowsGatewayLlmExecutionServiceToResolveDuringValidation()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempPath);
         try
         {
@@ -107,7 +107,7 @@ public sealed class CoreServicesExtensionsTests
     [Fact]
     public async Task AddOpenClawCoreServices_RegistersEmbeddingBackfillHostedService()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempPath);
         try
         {
@@ -152,7 +152,7 @@ public sealed class CoreServicesExtensionsTests
     [Fact]
     public void AddOpenClawCoreServices_MempalaceMemoryProvider_UsesApplicationStoppingCancellation()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempPath);
         try
         {
@@ -220,11 +220,11 @@ public sealed class CoreServicesExtensionsTests
     [Fact]
     public void AddOpenClawCoreServices_MempalaceMemoryProvider_RespectsBlockedDynamicPlugins()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempPath);
         try
         {
-            var startPath = Path.Combine(tempPath, "plugin.start");
+            var startPath = Path.Join(tempPath, "plugin.start");
             var pluginId = "native-dynamic-memory-blocked";
             var pluginDir = CreateNativePlugin(
                 tempPath,
@@ -297,12 +297,12 @@ public sealed class CoreServicesExtensionsTests
     [Fact]
     public void AddOpenClawCoreServices_MempalaceMemoryProvider_DisposesDynamicHostWhenNoProviderMatches()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempPath);
         try
         {
-            var startPath = Path.Combine(tempPath, "plugin.start");
-            var stopPath = Path.Combine(tempPath, "plugin.stop");
+            var startPath = Path.Join(tempPath, "plugin.start");
+            var stopPath = Path.Join(tempPath, "plugin.stop");
             var pluginId = "native-dynamic-memory-mismatch";
             var pluginDir = CreateNativePlugin(
                 tempPath,
@@ -392,10 +392,10 @@ public sealed class CoreServicesExtensionsTests
         string typeName,
         string[] capabilities)
     {
-        var pluginDir = Path.Combine(rootPath, id);
+        var pluginDir = Path.Join(rootPath, id);
         Directory.CreateDirectory(pluginDir);
         var localAssemblyName = Path.GetFileName(assemblyPath);
-        File.Copy(assemblyPath, Path.Combine(pluginDir, localAssemblyName), overwrite: true);
+        File.Copy(assemblyPath, Path.Join(pluginDir, localAssemblyName), overwrite: true);
 
         var manifest = $$"""
         {
@@ -408,7 +408,7 @@ public sealed class CoreServicesExtensionsTests
           "jitOnly": true
         }
         """;
-        File.WriteAllText(Path.Combine(pluginDir, "openclaw.native-plugin.json"), manifest);
+        File.WriteAllText(Path.Join(pluginDir, "openclaw.native-plugin.json"), manifest);
         return pluginDir;
     }
 
