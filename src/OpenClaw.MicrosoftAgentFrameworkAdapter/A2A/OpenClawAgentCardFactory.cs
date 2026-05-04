@@ -12,14 +12,14 @@ public sealed class OpenClawAgentCardFactory
         _options = options.Value;
     }
 
-    public AgentCard Create(string agentUrl)
+    public AgentCard Create(string httpJsonAgentUrl, string? jsonRpcAgentUrl = null)
     {
         return new AgentCard
         {
             Name = _options.AgentName,
             Description = _options.AgentDescription,
             Version = _options.A2AVersion,
-            SupportedInterfaces = [new AgentInterface { Url = agentUrl }],
+            SupportedInterfaces = BuildSupportedInterfaces(httpJsonAgentUrl, jsonRpcAgentUrl),
             Provider = new AgentProvider
             {
                 Organization = "OpenClaw.NET"
@@ -33,6 +33,31 @@ public sealed class OpenClawAgentCardFactory
             DefaultOutputModes = ["text/plain"],
             Skills = BuildSkills()
         };
+    }
+
+    private static List<AgentInterface> BuildSupportedInterfaces(string httpJsonAgentUrl, string? jsonRpcAgentUrl)
+    {
+        var interfaces = new List<AgentInterface>
+        {
+            new()
+            {
+                Url = httpJsonAgentUrl,
+                ProtocolBinding = ProtocolBindingNames.HttpJson,
+                ProtocolVersion = "1.0"
+            }
+        };
+
+        if (!string.IsNullOrWhiteSpace(jsonRpcAgentUrl))
+        {
+            interfaces.Add(new AgentInterface
+            {
+                Url = jsonRpcAgentUrl,
+                ProtocolBinding = ProtocolBindingNames.JsonRpc,
+                ProtocolVersion = "1.0"
+            });
+        }
+
+        return interfaces;
     }
 
     private List<AgentSkill> BuildSkills()

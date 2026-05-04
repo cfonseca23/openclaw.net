@@ -11,6 +11,7 @@ using OpenClaw.MicrosoftAgentFrameworkAdapter.A2A;
 
 namespace OpenClaw.Gateway.A2A;
 
+#pragma warning disable MEAI001
 internal static class A2AEndpointExtensions
 {
     public static void MapOpenClawA2AEndpoints(
@@ -23,20 +24,20 @@ internal static class A2AEndpointExtensions
             return;
 
         var pathPrefix = NormalizePathPrefix(options.A2APathPrefix);
-        var requestHandler = app.Services.GetRequiredService<IA2ARequestHandler>();
         var cardFactory = app.Services.GetRequiredService<OpenClawAgentCardFactory>();
         var fallbackBaseUrl = ResolvePublicBaseUrl(null, startup, options);
-        var agentCard = cardFactory.Create(BuildAgentUrl(fallbackBaseUrl, pathPrefix));
+        var jsonRpcPath = GetJsonRpcPath(pathPrefix);
+        var agentCard = cardFactory.Create(
+            BuildAgentUrl(fallbackBaseUrl, pathPrefix),
+            BuildAgentUrl(fallbackBaseUrl, jsonRpcPath));
 
-        app.MapHttpA2A(requestHandler, agentCard, pathPrefix);
-        app.MapGet(GetWellKnownAgentCardPath(pathPrefix), (HttpContext ctx) =>
-        {
-            var publicBaseUrl = ResolvePublicBaseUrl(ctx, startup, options);
-            return Results.Json(
-                cardFactory.Create(BuildAgentUrl(publicBaseUrl, pathPrefix)),
-                MafJsonContext.Default.AgentCard);
-        });
-        app.Logger.LogInformation("A2A endpoints enabled at {PathPrefix}.", pathPrefix);
+        app.MapA2AHttpJson(OpenClawA2ANames.AgentName, pathPrefix);
+        app.MapA2AJsonRpc(OpenClawA2ANames.AgentName, jsonRpcPath);
+        app.MapWellKnownAgentCard(agentCard, pathPrefix);
+        app.Logger.LogInformation(
+            "A2A endpoints enabled at {HttpJsonPath} with JSON-RPC fallback at {JsonRpcPath}.",
+            pathPrefix,
+            jsonRpcPath);
     }
 
     public static void UseOpenClawA2AAuth(
@@ -113,6 +114,9 @@ internal static class A2AEndpointExtensions
     internal static string GetWellKnownAgentCardPath(string pathPrefix)
         => pathPrefix + "/.well-known/agent-card.json";
 
+    internal static string GetJsonRpcPath(string pathPrefix)
+        => pathPrefix + "/rpc";
+
     private static string? BuildRequestBaseUrl(HttpContext context)
     {
         if (!context.Request.Host.HasValue)
@@ -133,4 +137,5 @@ internal static class A2AEndpointExtensions
         return value.Trim().TrimEnd('/');
     }
 }
+#pragma warning restore MEAI001
 #endif

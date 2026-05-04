@@ -27,7 +27,9 @@ public sealed class A2AIntegrationTests
         Assert.Equal("1.0.0", card.Version);
         Assert.Single(card.Skills!);
         Assert.Equal("general", card.Skills[0].Id);
-        Assert.Equal("http://localhost:5000/a2a", Assert.Single(card.SupportedInterfaces!).Url);
+        var agentInterface = Assert.Single(card.SupportedInterfaces!);
+        Assert.Equal("http://localhost:5000/a2a", agentInterface.Url);
+        Assert.Equal(ProtocolBindingNames.HttpJson, agentInterface.ProtocolBinding);
     }
 
     [Fact]
@@ -62,7 +64,7 @@ public sealed class A2AIntegrationTests
     }
 
     [Fact]
-    public void AddOpenClawA2AServices_Registers_RequestHandler()
+    public void AddOpenClawA2AServices_Registers_A2A_Server()
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -74,8 +76,9 @@ public sealed class A2AIntegrationTests
 
         Assert.NotNull(provider.GetService<OpenClawA2AAgentHandler>());
         Assert.NotNull(provider.GetService<OpenClawAgentCardFactory>());
-        Assert.NotNull(provider.GetService<ITaskStore>());
-        Assert.NotNull(provider.GetService<IA2ARequestHandler>());
+        Assert.NotNull(provider.GetRequiredKeyedService<ITaskStore>(OpenClawA2ANames.AgentName));
+        Assert.NotNull(provider.GetRequiredKeyedService<IAgentHandler>(OpenClawA2ANames.AgentName));
+        Assert.NotNull(provider.GetRequiredKeyedService<A2AServer>(OpenClawA2ANames.AgentName));
     }
 
     [Fact]
@@ -184,6 +187,27 @@ public sealed class A2AIntegrationTests
             options);
 
         Assert.Equal("https://public.example.test/root", resolved);
+    }
+
+    [Fact]
+    public void AgentCardFactory_Creates_HttpJson_And_JsonRpc_Interfaces_When_JsonRpc_Url_Is_Provided()
+    {
+        var factory = new OpenClawAgentCardFactory(Options.Create(CreateOptions()));
+
+        var card = factory.Create("http://localhost:5000/a2a", "http://localhost:5000/a2a/rpc");
+
+        Assert.Collection(
+            card.SupportedInterfaces!,
+            httpJson =>
+            {
+                Assert.Equal("http://localhost:5000/a2a", httpJson.Url);
+                Assert.Equal(ProtocolBindingNames.HttpJson, httpJson.ProtocolBinding);
+            },
+            jsonRpc =>
+            {
+                Assert.Equal("http://localhost:5000/a2a/rpc", jsonRpc.Url);
+                Assert.Equal(ProtocolBindingNames.JsonRpc, jsonRpc.ProtocolBinding);
+            });
     }
 
     private static MafOptions CreateOptions()
