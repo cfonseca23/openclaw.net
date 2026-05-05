@@ -266,10 +266,9 @@ public sealed class PaymentRuntimeTests
             "mock",
             new ChallengeThenOkHandler("payload=keep", HttpMethod.Post));
         using var client = new HttpClient(handler);
+        using var content = new StringContent("payload=keep", Encoding.UTF8, "application/x-www-form-urlencoded");
 
-        using var response = await client.PostAsync(
-            "https://example.test/paid",
-            new StringContent("payload=keep", Encoding.UTF8, "application/x-www-form-urlencoded"));
+        using var response = await client.PostAsync("https://example.test/paid", content);
         var body = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -279,8 +278,8 @@ public sealed class PaymentRuntimeTests
     [Fact]
     public async Task FileMemoryStore_RedactsPersistedSessionWithoutMutatingLiveSession()
     {
-        var root = Path.Combine(Path.GetTempPath(), "openclaw-payment-tests", Guid.NewGuid().ToString("N"));
-        var store = new FileMemoryStore(
+        var root = Path.Combine(Path.GetTempPath(), Path.Combine("openclaw-payment-tests", Guid.NewGuid().ToString("N")));
+        using var store = new FileMemoryStore(
             root,
             redaction: new RedactionPipeline([new PaymentSensitiveDataRedactor()]));
         try
@@ -306,7 +305,6 @@ public sealed class PaymentRuntimeTests
         }
         finally
         {
-            store.Dispose();
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
         }

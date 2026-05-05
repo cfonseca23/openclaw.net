@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Linq;
 using OpenClaw.Core.Security;
 using OpenClaw.Payments.Abstractions;
 
@@ -52,10 +53,9 @@ public sealed class PaymentSensitiveDataRedactor : ISensitiveDataRedactor, IPaym
     {
         Span<char> buffer = stackalloc char[value.Length];
         var count = 0;
-        foreach (var ch in value)
+        foreach (var ch in value.Where(static ch => ch is >= '0' and <= '9'))
         {
-            if (ch is >= '0' and <= '9')
-                buffer[count++] = ch;
+            buffer[count++] = ch;
         }
 
         return new string(buffer[..count]);

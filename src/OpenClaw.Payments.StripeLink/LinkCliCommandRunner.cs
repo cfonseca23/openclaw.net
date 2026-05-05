@@ -133,21 +133,37 @@ public sealed class LinkCliProcessRunner : ILinkCliCommandRunner
         }
     }
 
-    private static void TryKill(Process process)
+    private void TryKill(Process process)
     {
+        var processId = TryGetProcessId(process);
         try
         {
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
         }
+        catch (InvalidOperationException ex)
+        {
+            _logger?.LogDebug(ex, "Ignoring link-cli process kill failure for pid {ProcessId}.", processId);
+        }
+        catch (NotSupportedException ex)
+        {
+            _logger?.LogDebug(ex, "Ignoring unsupported link-cli process kill for pid {ProcessId}.", processId);
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            _logger?.LogDebug(ex, "Ignoring OS-level link-cli process kill failure for pid {ProcessId}.", processId);
+        }
+    }
+
+    private static int? TryGetProcessId(Process process)
+    {
+        try
+        {
+            return process.Id;
+        }
         catch (InvalidOperationException)
         {
-        }
-        catch (NotSupportedException)
-        {
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
+            return null;
         }
     }
 }

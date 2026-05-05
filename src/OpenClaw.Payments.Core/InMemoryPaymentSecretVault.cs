@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using OpenClaw.Payments.Abstractions;
 
 namespace OpenClaw.Payments.Core;
@@ -62,10 +63,8 @@ public sealed class InMemoryPaymentSecretVault : IPaymentSecretVault
 
     private void CleanupExpired(DateTimeOffset nowUtc)
     {
-        foreach (var item in _entries)
+        foreach (var item in _entries.Where(item => item.Value.ExpiresAtUtc <= nowUtc))
         {
-            if (item.Value.ExpiresAtUtc > nowUtc)
-                continue;
             if (_entries.TryRemove(item.Key, out var removed))
                 removed.Secret.Clear();
         }
