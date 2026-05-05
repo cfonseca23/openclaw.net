@@ -10,6 +10,7 @@ namespace OpenClaw.MicrosoftAgentFrameworkAdapter.A2A;
 
 public sealed class OpenClawA2AAgent : AIAgent
 {
+    // Must match the gateway's keyed A2A service registration; the Agent Card display name is configurable separately.
     public const string HostedAgentName = "openclaw";
 
     private readonly MafOptions _options;
@@ -29,6 +30,9 @@ public sealed class OpenClawA2AAgent : AIAgent
     public override string Name => HostedAgentName;
 
     public override string Description => _options.AgentDescription;
+
+    internal static string GetDisplayName(MafOptions options)
+        => string.IsNullOrWhiteSpace(options.AgentName) ? HostedAgentName : options.AgentName;
 
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
     {
@@ -154,7 +158,7 @@ public sealed class OpenClawA2AAgent : AIAgent
         }
 
         if (pendingUpdates.Count == 0)
-            pendingUpdates.Add(CreateUpdate($"[{Name}] Request completed.", responseId, messageId));
+            pendingUpdates.Add(CreateUpdate($"[{GetDisplayName(_options)}] Request completed.", responseId, messageId));
 
         foreach (var update in pendingUpdates)
             yield return update;

@@ -8,6 +8,7 @@ namespace OpenClaw.MicrosoftAgentFrameworkAdapter.A2A;
 
 public sealed class OpenClawA2AAgentHandler : IAgentHandler
 {
+    private readonly MafOptions _options;
     private readonly IOpenClawA2AExecutionBridge _bridge;
     private readonly ILogger<OpenClawA2AAgentHandler> _logger;
 
@@ -16,7 +17,7 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
         IOpenClawA2AExecutionBridge bridge,
         ILogger<OpenClawA2AAgentHandler> logger)
     {
-        _ = options.Value;
+        _options = options.Value;
         _bridge = bridge;
         _logger = logger;
     }
@@ -87,7 +88,7 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
         await eventQueue.EnqueueMessageAsync(
             responseText.Length > 0
                 ? CreateAgentMessage(responseText.ToString(), taskId, contextId)
-                : CreateAgentMessage($"[{OpenClawA2AAgent.HostedAgentName}] Request completed.", taskId, contextId),
+                : CreateAgentMessage($"[{OpenClawA2AAgent.GetDisplayName(_options)}] Request completed.", taskId, contextId),
             cancellationToken);
     }
 

@@ -52,6 +52,18 @@ public sealed class A2AIntegrationTests
     }
 
     [Fact]
+    public void A2AAgent_Name_Uses_Stable_Hosted_Service_Id()
+    {
+        var agent = new OpenClawA2AAgent(
+            Options.Create(CreateOptions()),
+            new FakeExecutionBridge(),
+            NullLogger<OpenClawA2AAgent>.Instance);
+
+        Assert.Equal(OpenClawA2AAgent.HostedAgentName, agent.Name);
+        Assert.NotEqual(CreateOptions().AgentName, agent.Name);
+    }
+
+    [Fact]
     public async Task A2AAgent_RunStreamingAsync_Emits_Fallback_Text_When_Bridge_Completes_Without_Text()
     {
         var agent = new OpenClawA2AAgent(
@@ -64,7 +76,7 @@ public sealed class A2AIntegrationTests
             updates.Add(update);
 
         var fallbackUpdate = Assert.Single(updates);
-        Assert.Equal("[openclaw] Request completed.", fallbackUpdate.Text);
+        Assert.Equal("[TestAgent] Request completed.", fallbackUpdate.Text);
     }
 
     [Fact]

@@ -45,6 +45,17 @@ By default, OpenClaw exposes these A2A protocol bindings:
 
 The path prefix can be changed with `OpenClaw:Experimental:MicrosoftAgentFramework:A2APathPrefix`.
 
+## Agent Names
+
+OpenClaw uses two A2A-facing names with different stability contracts:
+
+| Surface | Value | Purpose |
+| --- | --- | --- |
+| Hosted A2A service id | `openclaw` | Stable Microsoft Agent Framework host key used for keyed A2A server, task store, and handler registration. |
+| Agent Card `name` | `OpenClaw:Experimental:MicrosoftAgentFramework:AgentName` | Public display name advertised to A2A clients during discovery. |
+
+The hosted service id intentionally stays `openclaw` even when the Agent Card display name is customized. User-visible fallback messages use the Agent Card display name so responses correlate with discovery metadata. Keep the hosted id and card name aligned only if the host registration, endpoint mapping, and compatibility tests are changed together.
+
 ## Public Base URL
 
 Agent Card URLs are generated from the current request host by default. Set `OpenClaw:Experimental:MicrosoftAgentFramework:A2APublicBaseUrl` when the gateway runs behind a reverse proxy, container ingress, tunnel, or any host where the bind address is not externally reachable.
@@ -91,7 +102,7 @@ Expected handler behavior:
 | Runtime outcome | A2A REST response behavior |
 | --- | --- |
 | Text deltas are produced | Concatenate text deltas into one agent message. |
-| The runtime completes without text | Return `[openclaw] Request completed.` as an agent message. |
+| The runtime completes without text | Return `[<AgentName>] Request completed.` as an agent message. |
 | A recoverable bridge/runtime exception occurs | Log the exception and return `A2A request failed.` as an agent message. |
 | The request is cancelled | Propagate cancellation instead of fabricating a response. |
 

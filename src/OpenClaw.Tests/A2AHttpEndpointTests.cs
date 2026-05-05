@@ -158,7 +158,7 @@ public sealed class A2AHttpEndpointTests
         Assert.NotNull(payload?.Message);
         Assert.Contains(
             payload!.Message!.Parts!,
-            part => string.Equals("[openclaw] Request completed.", part.Text, StringComparison.Ordinal));
+            part => string.Equals("[TestAgent] Request completed.", part.Text, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -186,7 +186,7 @@ public sealed class A2AHttpEndpointTests
         Assert.NotNull(payload?.Message);
         Assert.Contains(
             payload!.Message!.Parts!,
-            part => string.Equals("[openclaw] Request completed.", part.Text, StringComparison.Ordinal));
+            part => string.Equals("[TestAgent] Request completed.", part.Text, StringComparison.Ordinal));
     }
 
     private static async Task<WebApplication> CreateAppAsync(

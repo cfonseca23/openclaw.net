@@ -16,8 +16,7 @@ namespace OpenClaw.Gateway.A2A;
 internal static class A2AEndpointExtensions
 {
     internal const string StandardWellKnownAgentCardPath = "/.well-known/agent-card.json";
-    private static readonly JsonTypeInfo<AgentCard> AgentCardJsonTypeInfo =
-        (JsonTypeInfo<AgentCard>)A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentCard));
+    private static readonly JsonTypeInfo<AgentCard> AgentCardJsonTypeInfo = MafJsonContext.Default.AgentCard;
 
     public static void MapOpenClawA2AEndpoints(
         this WebApplication app,
