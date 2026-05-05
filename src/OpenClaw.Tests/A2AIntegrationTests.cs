@@ -134,6 +134,34 @@ public sealed class A2AIntegrationTests
     }
 
     [Fact]
+    public async Task A2AAgentHandler_CancelAsync_NoOps_When_TaskId_Is_Missing()
+    {
+        var handler = new OpenClawA2AAgentHandler(
+            Options.Create(CreateOptions()),
+            new FakeExecutionBridge(),
+            NullLogger<OpenClawA2AAgentHandler>.Instance);
+        var eventQueue = new AgentEventQueue();
+
+        await handler.CancelAsync(
+            new RequestContext
+            {
+                Message = null!,
+                TaskId = "",
+                ContextId = "",
+                StreamingResponse = false
+            },
+            eventQueue,
+            CancellationToken.None);
+        eventQueue.Complete(null!);
+
+        var events = new List<StreamResponse>();
+        await foreach (var evt in eventQueue)
+            events.Add(evt);
+
+        Assert.Empty(events);
+    }
+
+    [Fact]
     public async Task AddOpenClawA2AServices_Registers_A2A_Server()
     {
         var services = new ServiceCollection();

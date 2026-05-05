@@ -97,9 +97,13 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
         AgentEventQueue eventQueue,
         CancellationToken cancellationToken)
     {
-        var taskId = string.IsNullOrWhiteSpace(context.TaskId)
-            ? Guid.NewGuid().ToString("N")
-            : context.TaskId;
+        if (string.IsNullOrWhiteSpace(context.TaskId))
+        {
+            _logger.LogDebug("Ignoring A2A cancellation request without a task id.");
+            return;
+        }
+
+        var taskId = context.TaskId;
         var contextId = string.IsNullOrWhiteSpace(context.ContextId)
             ? taskId
             : context.ContextId;
