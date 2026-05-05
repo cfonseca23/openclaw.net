@@ -27,26 +27,26 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
         AgentEventQueue eventQueue,
         CancellationToken cancellationToken)
     {
-        var updater = new TaskUpdater(eventQueue, context.TaskId, context.ContextId);
-        await updater.SubmitAsync(cancellationToken);
-        await updater.StartWorkAsync(null, cancellationToken);
-
-        var request = new OpenClawA2AExecutionRequest
-        {
-            SessionId = context.TaskId,
-            ChannelId = "a2a",
-            SenderId = string.IsNullOrWhiteSpace(context.ContextId) ? "a2a-client" : context.ContextId,
-            UserText = ExtractUserText(context),
-            MessageId = context.Message?.MessageId
-        };
-
+        var taskId = string.IsNullOrWhiteSpace(context.TaskId)
+            ? Guid.NewGuid().ToString("N")
+            : context.TaskId;
+        var contextId = string.IsNullOrWhiteSpace(context.ContextId)
+            ? taskId
+            : context.ContextId;
         var responseText = new StringBuilder();
         string? errorMessage = null;
 
         try
         {
             await _bridge.ExecuteStreamingAsync(
-                request,
+                new OpenClawA2AExecutionRequest
+                {
+                    SessionId = taskId,
+                    ChannelId = "a2a",
+                    SenderId = contextId,
+                    UserText = ExtractUserText(context),
+                    MessageId = context.Message?.MessageId
+                },
                 (evt, ct) =>
                 {
                     switch (evt.Type)
@@ -61,7 +61,7 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
 
                     return ValueTask.CompletedTask;
                 },
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -69,21 +69,26 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "A2A execution failed for task {TaskId}", context.TaskId);
-            await updater.FailAsync(CreateAgentMessage("A2A request failed."), cancellationToken);
+            _logger.LogError(ex, "A2A execution failed for task {TaskId}", taskId);
+            await eventQueue.EnqueueMessageAsync(
+                CreateAgentMessage("A2A request failed.", taskId, contextId),
+                cancellationToken);
             return;
         }
 
         if (!string.IsNullOrWhiteSpace(errorMessage))
         {
-            await updater.FailAsync(CreateAgentMessage(errorMessage), cancellationToken);
+            _logger.LogWarning("A2A execution failed for task {TaskId}: {Message}", taskId, errorMessage);
+            await eventQueue.EnqueueMessageAsync(
+                CreateAgentMessage(errorMessage, taskId, contextId),
+                cancellationToken);
             return;
         }
 
-        await updater.CompleteAsync(
+        await eventQueue.EnqueueMessageAsync(
             responseText.Length > 0
-                ? CreateAgentMessage(responseText.ToString())
-                : CreateAgentMessage($"[{_options.AgentName}] Request completed."),
+                ? CreateAgentMessage(responseText.ToString(), taskId, contextId)
+                : CreateAgentMessage($"[{OpenClawA2AAgent.GetDisplayName(_options)}] Request completed.", taskId, contextId),
             cancellationToken);
     }
 
@@ -92,7 +97,17 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
         AgentEventQueue eventQueue,
         CancellationToken cancellationToken)
     {
-        var updater = new TaskUpdater(eventQueue, context.TaskId, context.ContextId);
+        if (string.IsNullOrWhiteSpace(context.TaskId))
+        {
+            _logger.LogDebug("Ignoring A2A cancellation request without a task id.");
+            return;
+        }
+
+        var taskId = context.TaskId;
+        var contextId = string.IsNullOrWhiteSpace(context.ContextId)
+            ? taskId
+            : context.ContextId;
+        var updater = new TaskUpdater(eventQueue, taskId, contextId);
         await updater.CancelAsync(cancellationToken);
     }
 
@@ -111,10 +126,13 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
         return string.Empty;
     }
 
-    private static Message CreateAgentMessage(string text)
+    private static Message CreateAgentMessage(string text, string taskId, string contextId)
         => new()
         {
             Role = Role.Agent,
+            MessageId = Guid.NewGuid().ToString("N"),
+            TaskId = taskId,
+            ContextId = contextId,
             Parts = [Part.FromText(text)]
         };
 }

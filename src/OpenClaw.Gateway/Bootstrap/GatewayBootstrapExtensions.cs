@@ -2,11 +2,15 @@ using System.Net.Http.Headers;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+#if OPENCLAW_ENABLE_MAF_EXPERIMENT
+using A2A;
+#endif
 using Microsoft.Extensions.Configuration;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Plugins;
 using OpenClaw.Core.Security;
 using OpenClaw.Core.Validation;
+using OpenClaw.Gateway;
 using OpenClaw.Gateway.Extensions;
 
 namespace OpenClaw.Gateway.Bootstrap;
@@ -18,7 +22,15 @@ internal static class GatewayBootstrapExtensions
         ApplyConfigFileOverride(builder, args);
 
         builder.Services.ConfigureHttpJsonOptions(opts =>
-            opts.SerializerOptions.TypeInfoResolverChain.Add(CoreJsonContext.Default));
+        {
+#if OPENCLAW_ENABLE_MAF_EXPERIMENT
+            var a2aResolver = A2AJsonUtilities.DefaultOptions.TypeInfoResolver;
+            if (a2aResolver is not null)
+                opts.SerializerOptions.TypeInfoResolverChain.Add(a2aResolver);
+#endif
+            opts.SerializerOptions.TypeInfoResolverChain.Add(GatewayJsonContext.Default);
+            opts.SerializerOptions.TypeInfoResolverChain.Add(CoreJsonContext.Default);
+        });
 
         var config = LoadGatewayConfig(builder.Configuration);
         var configSources = ConfigurationSourceDiagnosticsBuilder.Build(builder.Configuration, config);

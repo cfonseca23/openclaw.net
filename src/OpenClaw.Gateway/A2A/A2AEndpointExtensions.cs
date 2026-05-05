@@ -1,4 +1,5 @@
 #if OPENCLAW_ENABLE_MAF_EXPERIMENT
+using System.Text.Json.Serialization.Metadata;
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.AspNetCore.Http.Extensions;
@@ -11,8 +12,12 @@ using OpenClaw.MicrosoftAgentFrameworkAdapter.A2A;
 
 namespace OpenClaw.Gateway.A2A;
 
+#pragma warning disable MEAI001
 internal static class A2AEndpointExtensions
 {
+    internal const string StandardWellKnownAgentCardPath = "/.well-known/agent-card.json";
+    private static readonly JsonTypeInfo<AgentCard> AgentCardJsonTypeInfo = MafJsonContext.Default.AgentCard;
+
     public static void MapOpenClawA2AEndpoints(
         this WebApplication app,
         GatewayStartupContext startup,
@@ -23,20 +28,24 @@ internal static class A2AEndpointExtensions
             return;
 
         var pathPrefix = NormalizePathPrefix(options.A2APathPrefix);
-        var requestHandler = app.Services.GetRequiredService<IA2ARequestHandler>();
         var cardFactory = app.Services.GetRequiredService<OpenClawAgentCardFactory>();
-        var fallbackBaseUrl = ResolvePublicBaseUrl(null, startup, options);
-        var agentCard = cardFactory.Create(BuildAgentUrl(fallbackBaseUrl, pathPrefix));
+        var jsonRpcPath = GetJsonRpcPath(pathPrefix);
+        var legacyAgentCardPath = GetLegacyWellKnownAgentCardPath(pathPrefix);
 
-        app.MapHttpA2A(requestHandler, agentCard, pathPrefix);
-        app.MapGet(GetWellKnownAgentCardPath(pathPrefix), (HttpContext ctx) =>
-        {
-            var publicBaseUrl = ResolvePublicBaseUrl(ctx, startup, options);
-            return Results.Json(
-                cardFactory.Create(BuildAgentUrl(publicBaseUrl, pathPrefix)),
-                MafJsonContext.Default.AgentCard);
-        });
-        app.Logger.LogInformation("A2A endpoints enabled at {PathPrefix}.", pathPrefix);
+        app.MapA2AHttpJson(OpenClawA2ANames.AgentName, pathPrefix);
+        app.MapA2AJsonRpc(OpenClawA2ANames.AgentName, jsonRpcPath);
+        app.MapGet(StandardWellKnownAgentCardPath, (HttpContext context) =>
+            CreateAgentCardResult(context, startup, options, cardFactory, pathPrefix, jsonRpcPath));
+        app.MapGet(legacyAgentCardPath, (HttpContext context) =>
+            CreateAgentCardResult(context, startup, options, cardFactory, pathPrefix, jsonRpcPath));
+        var wellKnownLocation = string.IsNullOrWhiteSpace(options.A2APublicBaseUrl)
+            ? StandardWellKnownAgentCardPath
+            : BuildAgentUrl(ResolvePublicBaseUrl(null, startup, options), StandardWellKnownAgentCardPath);
+        app.Logger.LogInformation(
+            "A2A endpoints enabled at {HttpJsonPath} with JSON-RPC fallback at {JsonRpcPath}. Agent card discovery: {WellKnownLocation}",
+            pathPrefix,
+            jsonRpcPath,
+            wellKnownLocation);
     }
 
     public static void UseOpenClawA2AAuth(
@@ -52,6 +61,12 @@ internal static class A2AEndpointExtensions
 
         app.Use(async (ctx, next) =>
         {
+            if (IsA2ADiscoveryPath(ctx.Request.Path, pathPrefix))
+            {
+                await next(ctx);
+                return;
+            }
+
             if (ctx.Request.Path.StartsWithSegments(pathPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 if (!EndpointHelpers.IsAuthorizedRequest(ctx, startup.Config, startup.IsNonLoopbackBind))
@@ -110,8 +125,47 @@ internal static class A2AEndpointExtensions
     internal static string BuildAgentUrl(string publicBaseUrl, string pathPrefix)
         => NormalizePublicBaseUrl(publicBaseUrl)! + pathPrefix;
 
-    internal static string GetWellKnownAgentCardPath(string pathPrefix)
-        => pathPrefix + "/.well-known/agent-card.json";
+    internal static string GetWellKnownAgentCardPath()
+        => StandardWellKnownAgentCardPath;
+
+    internal static string GetLegacyWellKnownAgentCardPath(string pathPrefix)
+        => pathPrefix + StandardWellKnownAgentCardPath;
+
+    internal static string GetJsonRpcPath(string pathPrefix)
+        => pathPrefix + "/rpc";
+
+    internal static bool IsA2ADiscoveryPath(PathString requestPath, string pathPrefix)
+    {
+        var path = requestPath.Value;
+        return string.Equals(path, StandardWellKnownAgentCardPath, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(path, GetLegacyWellKnownAgentCardPath(pathPrefix), StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static AgentCard BuildAgentCardForRequest(
+        HttpContext context,
+        GatewayStartupContext startup,
+        MafOptions options,
+        OpenClawAgentCardFactory cardFactory,
+        string pathPrefix,
+        string jsonRpcPath)
+    {
+        var publicBaseUrl = ResolvePublicBaseUrl(context, startup, options);
+        return cardFactory.Create(
+            BuildAgentUrl(publicBaseUrl, pathPrefix),
+            BuildAgentUrl(publicBaseUrl, jsonRpcPath));
+    }
+
+    private static IResult CreateAgentCardResult(
+        HttpContext context,
+        GatewayStartupContext startup,
+        MafOptions options,
+        OpenClawAgentCardFactory cardFactory,
+        string pathPrefix,
+        string jsonRpcPath)
+    {
+        var card = BuildAgentCardForRequest(context, startup, options, cardFactory, pathPrefix, jsonRpcPath);
+        return Results.Json(card, AgentCardJsonTypeInfo);
+    }
 
     private static string? BuildRequestBaseUrl(HttpContext context)
     {
@@ -133,4 +187,5 @@ internal static class A2AEndpointExtensions
         return value.Trim().TrimEnd('/');
     }
 }
+#pragma warning restore MEAI001
 #endif
