@@ -280,8 +280,8 @@ public sealed class PaymentRuntimeTests
     {
         var runId = Guid.NewGuid().ToString("N");
         Assert.False(Path.IsPathRooted(runId));
-        var baseRoot = Path.Combine(Path.GetTempPath(), "openclaw-payment-tests");
-        var root = Path.Combine(baseRoot, runId);
+        var baseRoot = Path.Join(Path.GetTempPath(), "openclaw-payment-tests");
+        var root = Path.Join(baseRoot, runId);
         using var store = new FileMemoryStore(
             root,
             redaction: new RedactionPipeline([new PaymentSensitiveDataRedactor()]));
